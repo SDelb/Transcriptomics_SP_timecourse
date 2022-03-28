@@ -1,0 +1,109 @@
+---
+title: "replicate correlations"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Retrieve normalized counts for DE genes and exons:
+
+```{r}
+# Genes:
+lcpm = read.delim("../../out/lcpm_updated.txt", header = T, as.is = T)
+raw = read.delim("../../data/raw_counts_filtered.txt", header = T, as.is = T)
+raw = raw[,colnames(raw) %in% colnames(lcpm)]  
+
+# Add the raw counts for the 86 exons:
+load("../../Differential_exon_use/out/DEXSeq_output_CV.RData")
+C_exons = c()
+V_exons = c()
+for(i in 1:length(deu_exons)){
+  exon = deu_exons[i]
+  gene = strsplit(exon, split = ":")[[1]][1]
+  A_C = c(); B_C = c(); C_C = c()
+  A_V = c(); B_V = c(); C_V = c()
+  for(j in 1:10){
+    o = dx_CV_list[[j]]
+    rt <- which(o$groupID == gene)
+    sampleData <- o@sampleData
+    count = o$countData[rt,]
+    if(is.null(nrow(count))){ # if only one exon for the gene
+      A_C = c(A_C, count[grep("A_C", names(count))])
+      B_C = c(B_C, count[grep("B_C", names(count))])
+      C_C = c(C_C, count[grep("C_C", names(count))])
+      A_V = c(A_V, count[grep("A_V", names(count))])
+      B_V = c(B_V, count[grep("B_V", names(count))])
+      C_V = c(C_V, count[grep("C_V", names(count))])
+    }
+    else{
+    count = count[rownames(count) == exon,]
+    A_C = c(A_C, count[grep("A_C", names(count))])
+    B_C = c(B_C, count[grep("B_C", names(count))])
+    C_C = c(C_C, count[grep("C_C", names(count))])
+    A_V = c(A_V, count[grep("A_V", names(count))])
+    B_V = c(B_V, count[grep("B_V", names(count))])
+    C_V = c(C_V, count[grep("C_V", names(count))])
+    }
+  }
+  counts_C = c(A_C, B_C, C_C)
+  counts_V = c(A_V, B_V, C_V)
+  C_exons = rbind(C_exons, counts_C)
+  V_exons = rbind(V_exons, counts_V)
+}
+colnames(C_exons) = colnames(raw[,c(21:30, 51:60, 80:87)])
+colnames(V_exons) = colnames(raw[,c(11:20, 41:50, 71:79)])
+sum(is.na(C_exons)) # 0
+sum(is.na(V_exons)) # 0
+rownames(C_exons) = deu_exons
+rownames(V_exons) = deu_exons
+
+# Combine the gene and exon counts:
+all_counts = cbind(rbind(raw[,c(21:30, 51:60, 80:87)], C_exons), 
+                   rbind(raw[,c(11:20, 41:50, 71:79)], V_exons))
+dim(all_counts) 
+
+# Normalize: 
+library(edgeR)
+y = DGEList(all_counts)
+y = calcNormFactors(y, method="TMM")
+lcpm = cpm(y, log=TRUE, prior.count=1)
+save(lcpm, file = "lcpm_gene_and_exon.RData")
+
+# Calculate the LPWC correlations for the prior matrix:
+lcpm_M_repA = lcpm[rownames(lcpm) %in% c(deu_exons, DEgenes),1:10]
+lcpm_M_repB = lcpm[rownames(lcpm) %in% c(deu_exons, DEgenes),11:20]
+lcpm_M_repC = lcpm[rownames(lcpm) %in% c(deu_exons, DEgenes),21:28]
+
+lcpm_V_repA = lcpm[rownames(lcpm) %in% c(deu_exons, DEgenes),29:38]
+lcpm_V_repB = lcpm[rownames(lcpm) %in% c(deu_exons, DEgenes),39:48]
+lcpm_V_repC = lcpm[rownames(lcpm) %in% c(deu_exons, DEgenes),49:57]
+
+library(LPWC)
+timepoints = c(0.5, 1, 2, 3, 4, 5, 6, 8, 12, 24)
+load("../../Differential_exon_use/out/DEU_exons.RData")
+de_genes = read.delim("../../out/DE_genes_shrunken1.3fold.txt", header = T, as.is = T)[,1]
+load("lcpm_gene_and_exon.RData")
+lcpm = lcpm[rownames(lcpm) %in% c(deu_exons, de_genes),]
+
+LPWC_M_repA = as.matrix(LPWC::corr.bestlag(lcpm_M_repA, timepoints = timepoints, max.lag = NULL)$corr)
+LPWC_M_repB = as.matrix(LPWC::corr.bestlag(lcpm_M_repB, timepoints = timepoints, max.lag = NULL)$corr)
+LPWC_M_repC = as.matrix(LPWC::corr.bestlag(lcpm_M_repC, timepoints = timepoints[-c(3, 4)], max.lag = NULL)$corr)
+
+LPWC_V_repA = as.matrix(LPWC::corr.bestlag(lcpm_V_repA, timepoints = timepoints, max.lag = NULL)$corr)
+LPWC_V_repB = as.matrix(LPWC::corr.bestlag(lcpm_V_repB, timepoints = timepoints, max.lag = NULL)$corr)
+LPWC_V_repC = as.matrix(LPWC::corr.bestlag(lcpm_V_repC, timepoints = timepoints[-c(7)], max.lag = NULL)$corr)
+
+MA = LPWC_M_repA
+save(MA, file = "MA.RData")
+MB = LPWC_M_repB
+save(MB, file = "MB.RData")
+MC = LPWC_M_repC
+save(MC, file = "MC.RData")
+VA = LPWC_V_repA
+save(VA, file = "VA.RData")
+VB = LPWC_V_repB
+save(VB, file = "VB.RData")
+VC = LPWC_C_repC
+save(VC, file = "VC.RData")
+```
+

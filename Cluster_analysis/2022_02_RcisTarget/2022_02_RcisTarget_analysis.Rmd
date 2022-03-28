@@ -1,0 +1,80 @@
+---
+title: "RcisTarget analysis"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Run RcisTarget on each llr2 cluster:
+
+https://resources.aertslab.org/cistarget/
+
+dm6-5kb-upstream-full-tx-11species.mc8nr
+
+```{r}
+load("llr2_clusters_early_2022.RData")
+names(llr2.list) = paste("early", names(llr2.list), sep = "_")
+early = llr2.list
+load("llr2_clusters_late_2022.RData")
+names(llr2.list) = paste("late", names(llr2.list), sep = "_")
+late = llr2.list
+load("llr2_clusters_middle_2022.RData")
+names(llr2.list) = paste("middle", names(llr2.list), sep = "_")
+middle = llr2.list
+s = c(early, middle, late)
+s = lapply(geneList, function(x) x[,1])
+
+library(RcisTarget)
+
+# background gene set:
+ids = read.delim("../../data/all_ids.txt", header = T, as.is = T)
+background <- read.delim("../../data/raw_corrected_counts_filtered_updated.txt", header = T, as.is = T)
+background = ids[ids[,2] %in% rownames(background), 1]
+
+# genes of interest:
+geneList = lapply(s, function(x) (x))
+l = list()
+for(i in 1:length(geneList)){
+  genes = geneList[[i]]
+  g = sapply(genes, function(x) strsplit(x, split = ":E")[[1]][1])
+  g = ids[ids[,2] %in% g, 1]
+  l[[i]] = g
+}
+geneList = l
+
+missing_in_feather = read.delim("missing_in_feather.txt", header = F, as.is = T)
+l = list()
+for(i in 1:length(geneList)){
+  genes = geneList[[i]]
+  OK = genes[!genes %in% missing_in_feather[,1]]
+  missing = genes[genes %in% missing_in_feather[,1]]
+  idx = match(missing, missing_in_feather[,1])
+  missing = missing_in_feather[idx, 4]
+  l[[i]] = c(OK, missing)
+  }
+geneList = l
+names(geneList) = names(s)
+
+# Search space: 5 kbp upstream of TSS
+library(arrow)
+
+test = read_feather("dm6-5kb-upstream-full-tx-11species.mc8nr.feather")
+#missing = setdiff(background, colnames(test))
+#idx = match(missing, ids[,1])
+#fbid = ids[idx, 2]
+#write.table(cbind(missing, fbid), file = "missing_in_feather.txt", row.names = F, col.names = F, quote = F, sep = "\t")
+# use fbid to look up CG numbers online on Flybase. 
+
+missing_in_feather = read.delim("missing_in_feather.txt", header = F, as.is = T)
+background = background[! background %in% missing_in_feather[,1]]
+background = c(background, intersect(missing_in_feather[,4], colnames(test)))
+
+# Search space: 5 kbp upstream of TSS
+rankingsDb <- importRankings("dm6-5kb-upstream-full-tx-11species.mc8nr.feather", columns=background)
+bgRanking <- reRank(rankingsDb) 
+data("motifAnnotations_dmel_v8") 
+motifEnrichmentTable <- cisTarget(geneList, bgRanking, aucMaxRank=0.03*getNumColsInDB(bgRanking),
+                                  motifAnnot = motifAnnotations_dmel_v8)
+
+write.table(motifEnrichmentTable, file="RcisTarget_2022.txt", row.names=F, quote=F, sep="\t")
+```

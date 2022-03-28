@@ -1,0 +1,145 @@
+---
+title: "STRING priors"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Retrieve STRING scores for relevant gene pairs. 
+
+```{r}
+genes = read.delim("../out/DE_genes_shrunken1.3fold.txt", header = T, as.is = T)[,1]
+load("../../Differential_exon_use/out/DEU_exons.RData")
+
+all = c(genes, deu_exons)
+all = unique(unlist(sapply(all, function(x) strsplit(x, split = ":")[[1]][1])))
+
+all_genes_and_exons = all
+
+string = read.delim("7227.protein.links.v11.0.txt", header = T, as.is = T, sep=" ")
+idconverter = read.delim("fbgn_fbtr_fbpp_fb_2020_01.tsv", header = T, as.is = T)
+
+protein1 = unlist(sapply(string[,1], function(x) strsplit(x, split = "\\.")[[1]][2]))
+protein2 = unlist(sapply(string[,2], function(x) strsplit(x, split = "\\.")[[1]][2]))
+
+gene1 = match(protein1, idconverter[,3])
+gene1 = idconverter[gene1, 1]
+gene2 = match(protein2, idconverter[,3])
+gene2 = idconverter[gene2, 1]
+
+string = cbind(string, gene1, gene2)
+string_subset = string[string[,4] %in% all_genes_and_exons & string[,5] %in% all_genes_and_exons, ]
+
+missing = setdiff(all_genes_and_exons, c(string_subset[,4], string_subset[,5]))
+# 73 genes are missing; look up protein names on string 
+ids = read.delim("all_ids.txt", header = T, as.is = T)
+idx = match(missing, ids[,2])
+missing_symbols = ids[idx, 1]
+write.table(cbind(missing, missing_symbols), file = "temp_missing_from_string_all.txt", row.names = F, quote = F, sep = "\t")
+# only tf sima was missing relative to previous run
+
+find = read.delim("temp_missing_from_string_all.txt", header = T, as.is = T)
+all(find[,3] %in% c(protein1, protein2)) # F
+still_missing = setdiff(find[,3], c(protein1, protein2)) # 24 genes; should have 0 in prior matrix
+
+found = find[,3]
+found = found[! found %in% still_missing]
+found = paste("7227", found, sep = ".")
+
+all_protein_ids = unique(c(string_subset[,1], string_subset[,2], found))
+all(all_protein_ids %in% unique(c(string[,1], string[,2]))) # TRUE!
+
+final_set = string[string[,1] %in% all_protein_ids & string[,2] %in% all_protein_ids, ]
+
+# Some proteins have NA for their gene id - needs to be solved.
+id_NA = which(is.na(final_set$gene1) | is.na(final_set$gene2)) # 3370 lines
+id_NA = final_set[id_NA, ]
+# Can the protein ids be matched with ones in find?
+newid = paste("7227", find[,3], sep = ".")
+find = cbind(find, newid)
+
+# rows where both genes are NA:
+bothNA = id_NA[is.na(id_NA[,4]) & is.na(id_NA[,5]), ]
+forgene1 = match(bothNA[,1], find[,4])
+forgene2 = match(bothNA[,2], find[,4])
+forgene1 = find[forgene1, 1]
+forgene2 = find[forgene2, 1]
+bothNA = cbind(bothNA[,1:3], forgene1, forgene2)
+sum(is.na(bothNA)) # 0
+
+lefttodo = which(id_NA[,1] %in% bothNA[,1] & id_NA[,2] %in% bothNA[,2])
+lefttodo = id_NA[-lefttodo,]
+
+# rows where only gene1 is NA:
+gene1NA = lefttodo[is.na(lefttodo[,4]) , ]
+forgene1 = match(gene1NA[,1], find[,4])
+forgene1 = find[forgene1, 1]
+gene1NA = cbind(gene1NA[,1:3], forgene1, gene1NA[,5])
+
+# rows where only gene2 is NA:
+gene2NA = lefttodo[is.na(lefttodo[,5]), ]
+forgene2 = match(gene2NA[,2], find[,4])
+forgene2 = find[forgene2, 1]
+gene2NA = cbind(gene2NA[,1:3], gene1NA[,4], forgene2)
+
+# now we attach these together:
+colnames(gene1NA) = c("protein1", "protein2", "combined_score", "gene1", "gene2")
+colnames(gene2NA)  = colnames(gene1NA)
+colnames(bothNA) = colnames(gene1NA)
+solved = rbind(gene1NA, gene2NA, bothNA) # 3370 rows
+
+# add to data that did not have any NA (but first remove those NA rows):
+toremove = which(is.na(final_set[,4]) | is.na(final_set[,5]))
+final_set = final_set[-toremove, ]
+final_set = rbind(final_set, solved)
+save(final_set, file = "string_DE_1.3f_DEU.RData")
+
+#########################################################################################
+############################## STRING PRIOR MATRIX ######################################
+#########################################################################################
+
+load("string_DE_1.3f_DEU.RData") # final_set
+
+all = all_genes_and_exons
+
+f = final_set
+f = f[f[,4] %in% all & f[,5] %in% all, ]
+in_string = paste(f[,4], f[,5], sep = "_")
+f = cbind(f, in_string)
+
+all_genes_and_exons = c(genes, deu_exons)
+
+m = matrix(0, nrow = length(all_genes_and_exons), ncol = length(all_genes_and_exons))
+colnames(m)  = all_genes_and_exons
+rownames(m) = colnames(m)
+
+allpairs = combn(all_genes_and_exons, 2, simplify = T)
+allpairs = t(allpairs)
+allpairs = apply(allpairs, 1, function(x) paste(x[1], x[2], sep = "_"))
+# Add in each gene with itself as well:
+add = unlist(sapply(all_genes_and_exons, function(x) paste(x, x, sep = "_")))
+length(allpairs)
+length(add)
+test = c(allpairs, add)
+length(test) == length(allpairs) + length(add)
+allpairs = test
+
+for(i in 1:length(allpairs)){ 
+  # allpairs contains only gene names, no exons, but with grep, we should be able to treat exons in matrix m the same way as genes
+  g1 = strsplit(allpairs[i], split= "_")[[1]][1]
+  g2 = strsplit(allpairs[i], split = "_")[[1]][2]
+  if(g1 == g2){
+    m[grep(g1, rownames(m)), grep(g2, colnames(m))] = 1000
+    m[grep(g2, rownames(m)), grep(g1, colnames(m))] = 1000
+  }
+  if(g1 != g2){
+    if(g1 %in% c(f[,4], f[,5]) & g2 %in% c(f[,4], f[,5])){
+      if(paste(g1, g2, sep = "_") %in% in_string | paste(g2, g1, sep = "_") %in% in_string){
+        score = max(f[f[,6] == paste(g1, g2, sep = "_") | f[,6] == paste(g2, g1, sep = "_"),3])
+        m[grep(g1, rownames(m)), grep(g2, colnames(m))] = score
+        m[grep(g2, rownames(m)), grep(g1, colnames(m))] = score
+      }}}}
+diag(m) = 1000
+save(m, file = "string_DE_1.3fc_and_DEU_matrix_v110.RData")
+```
+

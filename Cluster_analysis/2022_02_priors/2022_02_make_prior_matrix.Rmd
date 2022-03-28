@@ -1,0 +1,82 @@
+---
+title: "Make prior matrix"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Make a prior matrix using:
+
+- STRING scores
+- replicate correlations
+- cell type assignment from scMappR
+
+```{r}
+# STRING:
+load("string_DE_1.3f_and_DEU_matrix_v110.RData")
+
+m[m < 700] = 0
+m[m >= 700 & m < 900] = 0.5
+m[m >= 900] = 1
+
+# Replicate data:
+load("MA.RData")
+load("MB.RData")
+load("MC.RData")
+load("VA.RData")
+load("VB.RData")
+load("VC.RData")
+
+avM = (MA + MB + MC) / 3
+avV = (VA + VB + VC) / 3
+o = MA
+o[] = 0
+o[(abs(avM) < 0.9 & abs(avM) >= 0.8) | (abs(avV) < 0.9 & abs(avV) >= 0.8)] = 5
+o[(abs(avM) >= 0.9) | (abs(avV) >= 0.9)] = 1
+o[o == 5] = NA
+
+# Single cell priors:
+load("../../Single_cell_integration/scMappR/genes_and_exons_assigned_to_celltype_head.RData") # df
+ids = read.delim("../../data/all_ids.txt", header = T, as.is = T)
+idx = match(rownames(df), ids[,1])
+rownames(df) = ids[idx, 2]
+df.list = split(rownames(df), df[,2])
+
+s = matrix(0, nrow = nrow(o), ncol = ncol(o))
+rownames(s) = rownames(o)
+colnames(s) = colnames(o)
+
+for(i in 1:length(df.list)){
+  idx = unlist(sapply(df.list[[i]], function(x) grep(x, colnames(s))))
+  s[idx, idx] = 0.5
+}
+
+# Final prior matrix:
+m[is.na(m)] = 0.5
+o[is.na(o)] = 0.5
+
+o = o[order(rownames(o)), order(colnames(o)) ]
+m = m[order(rownames(m)), order(colnames(m))]
+s = s[order(rownames(s)), order(colnames(s))]
+
+de = read.delim("../../out/DE_genes_shrunken1.3fold.txt", header = T, as.is = T)[,1]
+load("../../Differential_exon_use/out/DEU_exons.RData")
+all_genes_and_exons = c(de, deu_exons)
+
+o = o[rownames(o) %in% all_genes_and_exons, colnames(o) %in% all_genes_and_exons]
+m = m[rownames(m) %in% all_genes_and_exons, colnames(m) %in% all_genes_and_exons]
+s = s[rownames(s) %in% all_genes_and_exons, colnames(s) %in% all_genes_and_exons]
+
+all(rownames(s) == rownames(m))
+all(rownames(o) == rownames(m))
+
+priorMatrix = m + o + s
+# anything > 0.5 --> 1
+priorMatrix[priorMatrix >= 1] = 1
+round(table(priorMatrix)/(nrow(priorMatrix)*nrow(priorMatrix))*100, digits = 2)
+#    0   0.5     1 
+# 94.00  4.59  1.41
+priorMatrix[priorMatrix == 0.5] = NA
+save(priorMatrix, file = "2022_1_11_priorMatrix.RData")
+```
+

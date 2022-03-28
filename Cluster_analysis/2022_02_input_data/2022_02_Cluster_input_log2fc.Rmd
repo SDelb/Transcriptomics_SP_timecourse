@@ -1,0 +1,61 @@
+---
+title: "Log2 fold change input data"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+I will cluster gene and exon profiles using log2 fold changes of SP+/V, based on all replicates, as calculated by DESeq2 for the genes and DEXSeq for the exons. (original log2 fc, not shrunken)
+
+```{r}
+# Genes:
+load("../../out/DESeq2_CvsV.RData")
+fc = lapply(CvsVresults[[1]], function(x) x[,2])
+fc = do.call(cbind, fc)
+rownames(fc) = rownames(CvsVresults[[1]][[1]])
+genes = read.delim("../../out/DE_genes_shrunken1.3fold.txt", header = T, as.is = T)[,1]
+fc = fc[rownames(fc) %in% genes, ]
+
+# Exons:
+load("../../Differential_exon_use/out/DEXSeq_output_CV.RData")
+exonfc = lapply(dx_CV_list, function(x) x[,10])
+exonfc = do.call(cbind, exonfc)
+rownames(exonfc) = rownames(dx_CV_list[[1]])
+load("../../Differential_exon_use/out/DEU_exons.RData")
+exonfc = exonfc[rownames(exonfc) %in% deu_exons, ]
+# switch the signs of exonfc, because DEXSeq used SP+ as control instead of V:
+exonfc = -exonfc
+
+allfc = rbind(fc, exonfc)
+colnames(allfc) = c("t0.5", "t1", "t2", "t3", "t4", "t5", "t6", "t8", "t12", "t24")
+
+save(allfc, file = "gene_and_exon_fc_between_CV_1.3fc.RData")
+```
+
+For S vs V:
+
+```{r}
+# Genes:
+load("../../out/DESeq2_SvsV.RData")
+fc = lapply(SvsVresults[[1]], function(x) x[,2])
+fc = do.call(cbind, fc)
+rownames(fc) = rownames(SvsVresults[[1]][[1]])
+genes = read.delim("../../out/DE_genes_shrunken1.3fold.txt", header = T, as.is = T)[,1]
+fc = fc[rownames(fc) %in% genes, ]
+
+# Exons:
+load("../../Differential_exon_use/out/DEXSeq_output_SV.RData")
+exonfc = lapply(dx_SV_list, function(x) x[,10])
+exonfc = do.call(cbind, exonfc)
+rownames(exonfc) = rownames(dx_SV_list[[1]])
+load("../../Differential_exon_use/out/DEU_exons.RData")
+exonfc = exonfc[rownames(exonfc) %in% deu_exons, ]
+# switch the signs of exonfc, because DEXSeq used SP- as control instead of V:
+exonfc = -exonfc
+
+allfc = rbind(fc, exonfc)
+colnames(allfc) = c("t0.5", "t1", "t2", "t3", "t4", "t5", "t6", "t8", "t12", "t24")
+
+save(allfc, file = "gene_and_exon_fc_between_SV.RData")
+```
+

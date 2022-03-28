@@ -1,0 +1,407 @@
+---
+title: "Process RcisTarget output"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Clean up the output file:
+
+```{r}
+dat = read.delim("RcisTarget_2022.txt", header=T, as.is=T) 
+
+# First, remove the rows that do not have an annotated transcript factor with high confidence:
+dat = dat[dat[,5] != "",] 
+# Also remove the rows that have no enriched genes listed:
+dat = dat[dat[,7] != 0 ,]
+nrow(dat) # 10,283
+
+# Column 5 has the predicted TF that might bind, followed by "(directAnnotation)." or "(inferredBy_Orthology)." I will separate those to keep track of the direct annotations vs. ones predicted based on orthology. 
+direct = sapply(dat[,5], function(x) grepl(" (directAnnotation).", x, fixed = T))
+dat.direct = dat[direct,] 
+dat.inferred = dat[!(direct),] 
+
+# Now remove those strings.
+dat.direct[,5] = sapply(dat.direct[,5], function(x) gsub(" (directAnnotation).", "", x, fixed=TRUE))
+dat.inferred[,5] = sapply(dat.inferred[,5], function(x) gsub(" (inferredBy_Orthology).", "", x, fixed=TRUE))
+
+# Split by geneSet:
+G.direct = split(dat.direct, dat.direct[,1])
+G.inferred = split(dat.inferred, dat.inferred[,1])
+
+# Split each element by TF:
+G.directbyTF = lapply(G.direct, function(x) split(x, x[,5])) # The result is a nested list. First level = cluster; 2nd level = TFs with enriched binding sites
+G.inferredbyTF = lapply(G.inferred, function(x) split(x, x[,5]))
+  
+# For each TF, make a vector with all potentially regulated genes. (Now they might be listed in more than one row, and they are separated by ";")
+direct.final.list = list()
+for(i in 1:length(G.directbyTF)){
+  cluster = G.directbyTF[[i]]
+  TFs = list()
+  n = c()
+  for(j in 1:length(cluster)){
+    x = cluster[[j]]
+    targetGenes = unique(unlist(sapply(x[,9], function(f) strsplit(f, split=";"))))
+    TFs[[j]] = targetGenes
+    n = c(n, x[1,5])
+  }
+  names(TFs) = n
+  direct.final.list[[i]] = TFs
+}
+names(direct.final.list) = names(G.direct)
+save(direct.final.list, file="RcisTarget_directAnnotation_2022.RData")
+
+inferred.final.list = list()
+for(i in 1:length(G.inferredbyTF)){
+  cluster = G.inferredbyTF[[i]]
+  TFs = list()
+  n = c()
+  for(j in 1:length(cluster)){
+    x = cluster[[j]]
+    targetGenes = unique(unlist(sapply(x[,9], function(f) strsplit(f, split=";"))))
+    TFs[[j]] = targetGenes
+    n = c(n, x[1,5])
+  }
+  names(TFs) = n
+  inferred.final.list[[i]] = TFs
+}
+names(inferred.final.list) = names(G.inferred)
+save(inferred.final.list, file="RcisTarget_inferredAnnotation_2022.RData")
+```
+
+# Select predicted regulating TFs that are DE in the dataset (without fold change cutoff) and list their targets:
+
+```{r}
+load("../../out/DE_genes_3methods.RData")
+DE = unique(unlist(DE_3methods))
+
+# Also add genes with DE exons:
+load("../../Differential_exon_use/out/DEU_exons.RData")
+exonGenes = unique(unlist(sapply(deu_exons, function(x) strsplit(x, split = ":")[[1]][1])))
+DE = unique(c(exonGenes, DE))
+length(DE) # 2272 genes
+
+DEgenes = read.delim("../../out/DE_genes_shrunken1.3fold.txt", header =T, as.is = T)[,1]
+
+# Some genes were converted to different symbols to match the ones in the RcisTarget input files:
+m = read.delim("missing_in_feather.txt", header = F, as.is = T)
+
+all_direct = list()
+for(i in 1:length(direct.final.list)){
+  cluster_info_direct = direct.final.list[[i]]
+  TFdirect = names(cluster_info_direct)
+  TFdirect
+  TFs = sapply(TFdirect, function(x) gsub(" ", "", x, fixed = TRUE))
+  TFs
+  all = c()
+  for(j in 1:length(TFs)){
+    x = TFs[j]
+    x = unlist(sapply(x, function(z) strsplit(z, split = ";")[[1]]))
+    all = c(all, x)
+  }
+  TFs = unique(sapply(TFs, function(x) gsub(" ", "", x, fixed = TRUE)))
+  TFs
+  TFs = ids[ids[,1] %in% TFs, 2]
+  TFs
+  TFs_DE = TFs[TFs %in% DE] # these are the DE TFs
+  TFs_DE
+  if(sum(TFs_DE %in% DE) > 0){
+    # Now we need to select their targets:
+    # First select the names of those tfs in the RcisTarget output:
+    tf_list = list()
+    for(j in 1:length(TFs_DE)){
+      tf = ids[ids[,2] == TFs_DE[j], 1]
+      tf
+      if(tf == "E(spl)mbeta-HLH"){tf = "mbeta"}
+      tf = grep(tf, TFdirect, value = T)
+      tf
+      all_targets = c()
+      for(k in 1:length(tf)){
+        targets = unlist(cluster_info_direct[names(cluster_info_direct) == tf[k]])
+        targets = unique(c(ids[ids[,1] %in% targets, 2], m[m[,4] %in% targets, 2]))
+        targets = unlist(sapply(targets, function(x) grep(pattern = x, x = c(DEgenes, deu_exons), value = T)))
+        all_targets = c(all_targets, targets)
+      }
+    tf_list[[j]] = all_targets
+  }
+  names(tf_list) = TFs_DE
+  all_direct = c(all_direct, tf_list)
+}}
+length(all_direct) # 260
+length(unique(names(all_direct))) # 70
+# There are 70 unique transcription factors listed, but some are listed more than once. 
+
+# Repeat for indirect predictions based on homology:
+all_inferred = list()
+for(i in 1:length(inferred.final.list)){
+  cluster_info_direct = inferred.final.list[[i]]
+  TFdirect = names(cluster_info_direct)
+  TFdirect
+  TFs = sapply(TFdirect, function(x) gsub(" ", "", x, fixed = TRUE))
+  all = c()
+  for(j in 1:length(TFs)){
+    x = TFs[j]
+    x = unlist(sapply(x, function(z) strsplit(z, split = ";")[[1]]))
+    all = c(all, x)
+  }
+  TFs = unique(sapply(TFs, function(x) gsub(" ", "", x, fixed = TRUE)))
+  TFs = ids[ids[,1] %in% TFs, 2]
+  tfs = TFs[TFs %in% unique(unlist(DE))] # these are the DE TFs
+  tfs
+  if(sum(tfs %in% unlist(DE)) > 0){
+    # Now we need to select their targets:
+    # First select the names of those tfs in the RcisTarget output:
+    tf_list = list()
+    for(j in 1:length(tfs)){
+      tf = ids[ids[,2] == tfs[j], 1]
+      tf
+      if(tf == "E(spl)mbeta-HLH"){tf = "mbeta"}
+      tf = grep(tf, TFdirect, value = T)
+      tf
+      all_targets = c()
+      for(k in 1:length(tf)){
+        targets = unlist(cluster_info_direct[names(cluster_info_direct) == tf[k]])
+        targets = unique(c(ids[ids[,1] %in% targets, 2], m[m[,4] %in% targets, 2]))
+        targets = unlist(sapply(targets, function(x) grep(pattern = x, x = c(DEgenes, deu_exons), value = T)))
+        all_targets = c(all_targets, targets)
+      }
+    tf_list[[j]] = all_targets
+  }
+  names(tf_list) = tfs
+  all_inferred = c(all_inferred, tf_list)
+}}
+length(all_inferred) # 560
+length(unique(names(all_inferred))) # 84
+
+# Merge direct and inferred results, and merge targets that are regulated by the same TF:
+all = c(all_direct, all_inferred)
+unique_tfs = unique(names(all)) 
+length(unique_tfs) #  119 unique transcription factors
+updated_list = list()
+for(i in 1:length(unique_tfs)){
+  tf = unique_tfs[i]
+  merged = unlist(c(all[names(all) == tf]))
+  updated_list[[i]] = merged
+}
+names(updated_list) = unique_tfs
+length(updated_list) # 119
+save(updated_list, file = "tf_and_targets_list_2022.RData")
+```
+
+# List TFs and targets per cluster:
+
+```{r}
+load("../2022_02_clusters/llr2_clusters_early_2022.RData")
+early = llr2.list
+names(early) = paste("early", names(early), sep = "_")
+load("../2022_02_clusters/llr2_clusters_middle_2022.RData")
+middle = llr2.list
+names(middle) = paste("middle", names(middle), sep = "_")
+load("../2022_02_clusters/llr2_clusters_late_2022.RData")
+late = llr2.list
+names(late) = paste("late", names(late), sep = "_")
+
+all_clusters = c(early, middle, late)
+names(all_clusters)
+
+tf_targets_per_cluster = list()
+for(i in 1:length(all_clusters)){
+  cluster_genes = unlist(all_clusters[[i]])
+  check = unlist(lapply(updated_list, function(x) any(cluster_genes %in% x)))
+  keep = names(check[check == T])
+  keep_targets = updated_list[names(updated_list) %in% keep]
+  keep_targets = lapply(keep_targets, function(x) intersect(x, cluster_genes))
+  names(keep_targets) = keep
+  tf_targets_per_cluster[[i]] = keep_targets
+}
+length(tf_targets_per_cluster) # 62
+names(tf_targets_per_cluster) = names(all_clusters)
+```
+
+# Keep tf if it has at least 3 targets:
+
+```{r}
+tf_targets_per_cluster = tf_targets_per_cluster[unlist(lengths(tf_targets_per_cluster)) > 0] # 62 clusters left
+
+# Keep tf only if there are at least 3 targets:
+tf_targets_per_cluster_keep = list()
+for(i in 1:length(tf_targets_per_cluster)){
+  x = tf_targets_per_cluster[[i]]
+  check = unlist(lapply(x, function(y) length(y) >= 3))
+  tf_to_keep = names(check[which(check == T)])
+  tf_targets_per_cluster_keep[[i]] = x[names(x) %in% tf_to_keep]
+}
+length(tf_targets_per_cluster) # 62
+length(tf_targets_per_cluster_keep) # 62
+names(tf_targets_per_cluster_keep) = names(tf_targets_per_cluster)
+tf_targets_per_cluster_keep = tf_targets_per_cluster_keep[unlist(lengths(tf_targets_per_cluster_keep)) > 0]
+length(tf_targets_per_cluster_keep) # 60 clusters have at least one predicted tf that has at least 3 predicted targets. 
+```
+
+# Keep only TFs if the targets have a median abs LPWC correlation of at least 0.8:
+
+```{r}
+library(LPWC)
+timepoints = c(0.5, 1, 2, 3, 4, 5, 6, 8, 12, 24)
+load("../2022_02_input_data/gene_and_exon_fc_between_CV_1.3fc.RData")
+LPWC.out = LPWC::corr.bestlag(allfc, timepoints = timepoints, max.lag = NULL)
+lpwc_cor = as.matrix(LPWC.out$corr)
+diag(lpwc_cor) = 1
+save(lpwc_cor, file = "lpwc_cor_1.3fc.RData")
+
+m = lpwc_cor
+
+head(tf_targets_per_cluster_keep[[1]]) # each element of list = one cluster; for each cluster, TFs are listed, with their targets in that cluster. 
+
+new_list = list()
+for(i in 1:length(tf_targets_per_cluster_keep)){
+  cl = tf_targets_per_cluster_keep[[i]]
+  cl_list = list()
+  tf = c()
+  for(j in 1:length(cl)){
+    tf = c(tf, names(cl)[j])
+    targets = unlist(cl[[j]])
+    lpwc_cors = median(abs(m[rownames(m) %in% targets, colnames(m) %in% targets]))
+    cl_list[[j]] = lpwc_cors
+  }
+  names(cl_list) = tf
+  new_list[[i]] = cl_list
+}
+names(new_list) = names(tf_targets_per_cluster_keep)
+
+new2_list = list()
+for(i in 1:length(new_list)){
+  x = unlist(new_list[[i]])
+  keep = x[x >= 0.8]
+  new2_list[[i]] = keep
+}
+names(new2_list) = names(new_list)
+
+unlist(lengths(new2_list))
+new2_list = new2_list[unlist(lengths(new2_list)) > 0]
+length(new2_list) # 44 clusters left
+```
+
+# For this subset of TFs and targets per cluster, make figures, and keep only TFs that have a sensible expression pattern relative to their targets: 
+
+```{r}
+source("../../Figure_functions.R")
+
+for(j in 1:length(new2_list)){
+  pdf(paste(paste("TFs", names(new2_list)[j], sep = "_"), "pdf", sep = "."), width = 10, height = 7)
+  tf = names(unlist(new2_list[[j]]))
+  cl = names(new2_list)[j]
+  for(i in 1:length(tf)){
+    TF = tf[i]
+    targets = tf_targets_per_cluster_keep[names(tf_targets_per_cluster_keep) == cl][[1]]
+    targets = unlist(targets[names(targets) == TF])
+    if(length(unique(c(TF, targets))) >= 3){
+      gene_exon_fc_plot(genes = unique(c(TF, targets)), within = F, between = T, title = "", 
+                        highlight = paste(ids[ids[,2] == TF, 1], "NA", sep = ":"), contrast = "control",
+                        use_direct_label = T)
+      }
+    }
+  dev.off()
+}
+```
+
+# TFs to keep per cluster:
+
+```{r}
+early_cluster_2 = c("tj", "CrebA", "Clk", "Blimp-1", "Myc")
+early_cluster_3 = c("bsh")
+early_cluster_5 = c("CrebA", "Blimp-1")
+early_cluster_8 = c("Clk", "Myc")
+early_cluster_9 = c("Clk", "Myc")
+early_cluster_11 = c("Clk", "Myc")
+early_cluster_14 = c("Clk", "Myc")
+early_cluster_18 = c("tj", "Clk", "Myc")
+early_cluster_20 = c("tj")
+
+late_cluster_1 = c("Mef2", "E2f1", "CG12054", "Med", "sr")
+late_cluster_3 = c("Hr38", "Hmx", "sima")
+late_cluster_4 = c("Mef2", "Med", "fkh", "pita", "SoxN", "Nf-YA", "Hr38")
+late_cluster_5 = c("E2f1", "Pdp1", "tai", "Cf2")
+late_cluster_6 = c("nvy", "emc", "sima")
+late_cluster_7 = c("slou", "Dll", "Hmx", "Dr")
+late_cluster_9 = c("E2f1", "Cf2", "phol", "CG9650", "bi", "sr")
+late_cluster_10 = c("Cf2")
+late_cluster_12 = c("Hr38", "fru")
+late_cluster_13 = c("CG9650", "ovo")
+late_cluster_14 = c("h")
+late_cluster_15 = c("srp", "E2f1", "Pdp1")
+late_cluster_16 = c("Dr", "emc")
+late_cluster_17 = c("ovo", "SoxN")
+late_cluster_18 = c("zld","ovo")
+late_cluster_19 = c("lab", "retn")
+late_cluster_21 = c("maf-S")
+
+middle_cluster_1 = c("CrebA", "Blimp-1")
+middle_cluster_4 = c("dl")
+middle_cluster_8 = c("Clk")
+middle_cluster_10 = c("tj", "CrebA")
+middle_cluster_12 = c("CrebA", "Myc")
+middle_cluster_15 = c("CrebA")
+middle_cluster_16 = c("Stat92E", "Mondo")
+
+keep = list(early_cluster_2, early_cluster_3, early_cluster_5, early_cluster_8, early_cluster_9, early_cluster_11, 
+            early_cluster_14, early_cluster_18, early_cluster_20, 
+            late_cluster_1, late_cluster_3, late_cluster_4, late_cluster_5, late_cluster_6, late_cluster_7, late_cluster_9,
+            late_cluster_10, late_cluster_12,
+            late_cluster_13, late_cluster_14, late_cluster_15, late_cluster_16, late_cluster_17, late_cluster_18, late_cluster_19, 
+            late_cluster_21, 
+            middle_cluster_1, middle_cluster_4, middle_cluster_8, middle_cluster_10, middle_cluster_12, 
+            middle_cluster_15, middle_cluster_16)
+names(keep) = c("early_cluster_2", "early_cluster_3", "early_cluster_5", "early_cluster_8", "early_cluster_9", "early_cluster_11", 
+            "early_cluster_14", "early_cluster_18", "early_cluster_20", 
+            "late_cluster_1", "late_cluster_3", "late_cluster_4", "late_cluster_5", "late_cluster_6", "late_cluster_7", "late_cluster_9",
+            "late_cluster_10", "late_cluster_12",
+            "late_cluster_13", "late_cluster_14", "late_cluster_15", "late_cluster_16", "late_cluster_17", "late_cluster_18", 
+            "late_cluster_19", 
+            "late_cluster_21", 
+            "middle_cluster_1", "middle_cluster_4", "middle_cluster_8", "middle_cluster_10", "middle_cluster_12", 
+            "middle_cluster_15", "middle_cluster_16")
+```
+
+# Retrieve tfs and targets for each cluster:
+
+```{r}
+selected_tf_and_targets = list()
+for(i in 1:length(keep)){
+  cl = names(keep)[i]
+  all = tf_targets_per_cluster_keep[names(tf_targets_per_cluster_keep) == cl][[1]]
+  selected = all[names(all) %in% ids[ids[,1] %in% unlist(keep[[i]]), 2]]
+  selected_tf_and_targets[[i]] = selected
+}
+names(selected_tf_and_targets) = names(keep)
+save(selected_tf_and_targets, file = "separate_clusters_selected_tf_and_targets_2022.RData")
+```
+
+# List for each TF the targets, and clusters those targets belong to:
+
+```{r}
+all_tfs = unique(unlist(sapply(selected_tf_and_targets, function(x) names(x)))) # 40 tfs
+
+# List all targets for each tf, and the clusters in which they are found:
+selected_clusters = list()
+selected_targets = list()
+for(i in 1:length(all_tfs)){
+  tf = all_tfs[i]
+  check = unlist(sapply(selected_tf_and_targets, function(x) tf %in% names(x)))
+  selected_clusters[[i]] = names(check[check == T])
+  targets = selected_tf_and_targets[check]
+  t = c()
+  for(j in 1:length(targets)){
+    x = names(targets[[j]])
+    y = targets[[j]]
+    keep = which(x == tf)
+    t = c(t, unlist(y[keep]))
+  }
+  selected_targets[[i]] = t
+
+  }
+names(selected_clusters) = all_tfs
+names(selected_targets) = all_tfs
+save(selected_clusters, file = "selected_clusters_2022.RData")
+save(selected_targets, file = "selected_targets_2022.RData")
+```

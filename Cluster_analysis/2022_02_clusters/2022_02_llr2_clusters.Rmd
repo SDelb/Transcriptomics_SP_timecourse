@@ -1,0 +1,64 @@
+---
+title: "LLR2 clusters"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Step 2: Cluster each group separately using LLR2:
+
+```{r}
+load("2022_1_11_priorMatrix.RData") # priorMatrix
+hours = c(0.5, 1, 2, 3, 4, 5, 6, 8, 12, 24)
+load("../2022_02_input_data/gene_and_exon_fc_between_CV_1.3fc.RData") # allfc
+allfc = allfc[order(rownames(allfc)), ]
+priorMatrix = priorMatrix[order(rownames(priorMatrix)), order(colnames(priorMatrix))]
+
+source("1_LLR2.R")
+
+load("early_genes.RData")
+load("middle_genes.RData")
+load("late_genes.RData")
+
+llr2_early = LLR2(geneData = allfc[rownames(allfc) %in% early,], hours = hours, bayes=TRUE, 
+              priorMatrix=priorMatrix[rownames(priorMatrix) %in% early, colnames(priorMatrix) %in% early], writeToCSV=F)
+
+llr2_middle = LLR2(geneData = allfc[rownames(allfc) %in% middle,], hours = hours, bayes=TRUE, 
+              priorMatrix=priorMatrix[rownames(priorMatrix) %in% middle, colnames(priorMatrix) %in% middle], writeToCSV=F)
+
+llr2_late = LLR2(geneData = allfc[rownames(allfc) %in% late,], hours = hours, bayes=TRUE, 
+              priorMatrix=priorMatrix[rownames(priorMatrix) %in% late, colnames(priorMatrix) %in% late], writeToCSV=F)
+```
+
+# Early clusters:
+
+```{r}
+clust.early = hclust(as.dist(1-llr2_early[[1]]), method = "ward.D")
+clusters.early = cutree(clust.early, h = 1.6)
+clusters = cbind(names(clusters.early), clusters.early); colnames(clusters) = c("Gene", "Cluster")
+clusters[,2] = paste("cluster", clusters[,2], sep = "_")
+llr2.list = split(as.data.frame(clusters), clusters[,2])
+save(llr2.list, file = "llr2_clusters_early_2022.RData")
+```
+
+# Middle clusters:
+
+```{r}
+clust.middle = hclust(as.dist(1-llr2_middle[[1]]), method = "ward.D")
+clusters.middle = cutree(clust.middle, h = 2)
+clusters = cbind(names(clusters.middle), clusters.middle); colnames(clusters) = c("Gene", "Cluster")
+clusters[,2] = paste("cluster", clusters[,2], sep = "_")
+llr2.list = split(as.data.frame(clusters), clusters[,2])
+save(llr2.list, file = "llr2_clusters_middle_2022.RData")
+```
+
+# Late clusters:
+
+```{r}
+clust.late = hclust(as.dist(1-llr2_late[[1]]), method = "ward.D")
+clusters.late = cutree(clust.late, h = 2.2)
+clusters = cbind(names(clusters.late), clusters.late); colnames(clusters) = c("Gene", "Cluster")
+clusters[,2] = paste("cluster", clusters[,2], sep = "_")
+llr2.list = split(as.data.frame(clusters), clusters[,2])
+save(llr2.list, file = "llr2_clusters_late_2022.RData")
+```

@@ -1,0 +1,156 @@
+---
+title: "Large groups of genes"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+ids = read.delim("../../data/all_ids.txt", header = T, as.is = T)
+```
+
+# Step 1: divide genes up in to ones that are significant within the first 3-4h, 5-12h, and ones that only are significant at 24h:
+
+```{r}
+load("../../Differential_exon_use/out/DEU_exons.RData") # deu_exons
+genes = read.delim("../../out/DE_genes_shrunken1.3fold.txt", header = T, as.is = T)[,1]
+
+load("../../out/DESeq2_CvsV.RData")
+load("../../Differential_exon_use/out/DEXSeq_output_CV.RData")
+
+exons = deu_exons
+
+outliers = c("Amy-p", "Dro", "Eip75B:E011", "Sox120F:E006", "sNPF-R:E004")
+
+genes = setdiff(genes, ids[ids[,1] %in% outliers, 2])
+exons = setdiff(exons, ids[ids[,1] %in% outliers, 2])
+
+# retrieve for all features the p-value and log2 fold change at each time point:
+all_genes_results = list()
+for(i in 1:length(genes)){
+  f = genes[i]
+  g_results = lapply(CvsVresults[[1]], function(x) x[rownames(x) == f, c(6, 2)])
+  g_results = do.call(rbind, g_results)
+  all_genes_results[[i]] = as.data.frame(g_results)
+}
+names(all_genes_results) = genes
+
+all_exons_results = list()
+for(i in 1:length(exons)){
+  e = exons[i]
+  e_results = lapply(dx_CV_list, function(x) x[rownames(x) == e, c(7, 10)])
+  e_results = as.data.frame(do.call(rbind, e_results))
+  e_results[is.na(e_results)] = 1
+  all_exons_results[[i]] = e_results
+}
+names(all_exons_results) = exons
+
+# For each feature, what is the first time point at which a significant change occurs? 
+# Will ignore exons that are not significant in the c-v contrast.
+
+idx_genes = unlist(lapply(all_genes_results, function(x) which(x[,1] < 0.05)[1]))
+names(idx_genes) = genes
+sum(is.na(idx_genes)) # 85
+
+idx_exons = unlist(lapply(all_exons_results, function(y) which(y[,1] < 0.05)[1]))
+names(idx_exons) = names(all_exons_results)
+sum(is.na(idx_exons)) # 31
+
+rerun_genes = names(idx_genes[is.na(idx_genes)])
+rerun_exons = names(idx_exons[is.na(idx_exons)])
+
+idx_genes = idx_genes[! is.na(idx_genes)]
+idx_exons = idx_exons[! is.na(idx_exons)]
+
+# For the genes and exons with NA, use S vs V to find significant time points:
+load("../../out/DESeq2_SvsV.RData")
+load("../../Differential_exon_use/out/DEXSeq_output_SV.RData")
+
+all_genes_results = list()
+for(i in 1:length(rerun_genes)){
+  f = rerun_genes[i]
+  g_results = lapply(SvsVresults[[1]], function(x) x[rownames(x) == f, c(6, 2)])
+  g_results = do.call(rbind, g_results)
+  all_genes_results[[i]] = as.data.frame(g_results)
+}
+names(all_genes_results) = rerun_genes
+
+all_exons_results = list()
+for(i in 1:length(rerun_exons)){
+  e = rerun_exons[i]
+  e_results = lapply(dx_SV_list, function(x) x[rownames(x) == e, c(7, 10)])
+  e_results = as.data.frame(do.call(rbind, e_results))
+  e_results[is.na(e_results)] = 1
+  all_exons_results[[i]] = e_results
+}
+names(all_exons_results) = rerun_exons
+
+# retrieve for all features the p-value and log2 fold change at each time point:
+idx_genes_rerun = unlist(lapply(all_genes_results, function(x) which(x[,1] < 0.05)[1]))
+names(idx_genes_rerun) = rerun_genes
+sum(is.na(idx_genes_rerun)) # 57
+
+idx_exons_rerun = unlist(lapply(all_exons_results, function(y) which(y[,1] < 0.05)[1]))
+names(idx_exons_rerun) = rerun_exons
+sum(is.na(idx_exons_rerun)) # 28
+
+rerun_genes = names(idx_genes_rerun[is.na(idx_genes_rerun)])
+rerun_exons = names(idx_exons_rerun[is.na(idx_exons_rerun)])
+
+idx_genes = c(idx_genes, idx_genes_rerun[! is.na(idx_genes_rerun)])
+idx_exons = c(idx_exons, idx_exons_rerun[! is.na(idx_exons_rerun)])
+
+# For the clusters in rerun "0", use S vs C to find significant time points:
+load("../../out/DESeq2_SvsC.RData")
+load("../../Differential_exon_use/out/DEXSeq_output_SC.RData")
+
+all_genes_results = list()
+for(i in 1:length(rerun_genes)){
+  f = rerun_genes[i]
+  g_results = lapply(SvsCresults[[1]], function(x) x[rownames(x) == f, c(6, 2)])
+  g_results = do.call(rbind, g_results)
+  all_genes_results[[i]] = as.data.frame(g_results)
+}
+names(all_genes_results) = rerun_genes
+
+all_exons_results = list()
+for(i in 1:length(rerun_exons)){
+  e = rerun_exons[i]
+  e_results = lapply(dx_SC_list, function(x) x[rownames(x) == e, c(7, 10)])
+  e_results = as.data.frame(do.call(rbind, e_results))
+  e_results[is.na(e_results)] = 1
+  all_exons_results[[i]] = e_results
+}
+names(all_exons_results) = rerun_exons
+
+# retrieve for all features the p-value and log2 fold change at each time point:
+idx_genes_rerun = unlist(lapply(all_genes_results, function(x) which(x[,1] < 0.05)[1]))
+names(idx_genes_rerun) = rerun_genes
+sum(is.na(idx_genes_rerun)) # 5
+
+idx_exons_rerun = unlist(lapply(all_exons_results, function(y) which(y[,1] < 0.05)[1]))
+names(idx_exons_rerun) = rerun_exons
+sum(is.na(idx_exons_rerun)) # 0
+
+rerun_genes = names(idx_genes_rerun[is.na(idx_genes_rerun)])
+
+idx_genes = c(idx_genes, idx_genes_rerun[! is.na(idx_genes_rerun)])
+idx_exons = c(idx_exons, idx_exons_rerun[! is.na(idx_exons_rerun)])
+
+# not significant at any time point with pairwise DESeq2:
+ids[ids[,2] %in% rerun_genes, 1]
+# "Paics"         "CG31370"       "CG31664"       "apolpp"        "asRNA:CR45175"
+# will leave these genes out of the analysis.
+
+idx = c(idx_genes, idx_exons)
+
+# Group features based on whether their first significant change is within the first 4h (1-5), 12h (6-9), or only at 24h (10):
+early = c(names(idx_genes[idx_genes <=  5]), names(idx_exons[idx_exons <= 5])) # 368
+middle = c(names(idx_genes[idx_genes >  5 & idx_genes <= 9]), names(idx_exons[idx_exons > 5 & idx_exons <=9])) # 369
+late = c(names(idx_genes[idx_genes == 10]), names(idx_exons[idx_exons == 10])) # 568
+
+save(early, file = "early_genes.RData")
+save(middle, file = "middle_genes.RData")
+save(late, file = "late_genes.RData")
+```
+
