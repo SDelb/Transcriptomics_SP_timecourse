@@ -1,0 +1,126 @@
+---
+title: "DESeq2 spline fits"
+author: "Sofie Delbare"
+date: "January 15, 2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Packages:
+
+```{r}
+library(DESeq2); library(edgeR); library(ggplot2)
+library(splines)
+```
+
+# Raw counts & design info:
+
+```{r}
+dat = read.delim("data/raw_corrected_counts_filtered_updated.txt", header=T, as.is=T)
+d = read.delim("data/design_updated.txt", header = T, as.is = T)
+```
+
+# C vs V comparison:
+
+```{r}
+CvsVdat = dat[,c(11:30, 41:60, 71:87)]
+CvsVd = d[c(11:30, 41:60, 71:87),]
+```
+
+Run DESeq2 with natural cubic spline:
+
+```{r}
+# create a natural cubic spline basis with 3 degrees of freedom
+matTimeSplineBasis <- ns(CvsVd$Timepoint, df=3)
+colnames(matTimeSplineBasis) <- paste0("spline", seq(1, dim(matTimeSplineBasis)[2]))
+
+# add spline basis into annotation data frame
+dfAnnotationDESeq2 <- cbind(CvsVd, matTimeSplineBasis)
+View(dfAnnotationDESeq2)
+
+dds = DESeqDataSetFromMatrix(
+    countData = as.matrix(CvsVdat),
+    colData = dfAnnotationDESeq2,
+    design = ~ 1 + Treatment + spline1 + spline2 + spline3+ Treatment:spline1 + Treatment:spline2 + Treatment:spline3 )
+
+dds <- estimateSizeFactors(dds)
+dds <- estimateDispersionsGeneEst(dds)
+dds <- estimateDispersionsFit(dds)
+dds <- estimateDispersionsMAP(dds, outlierSD = 10)
+dds = nbinomLRT(dds, full = ~ 1 + Treatment + spline1 + spline2 + spline3+ Treatment:spline1 + 
+                  Treatment:spline2 + Treatment:spline3, reduced = ~ 1+ spline1 + spline2 + spline3)
+
+r = results(dds)
+r = na.omit(r)
+nrow(r[r$padj < 0.05,]) 
+write.table(r, file = "out/DESeq2_CvsV_splines.txt", row.names = T, quote = F, sep = "\t")
+```
+
+# S vs C comparison:
+
+```{r}
+SvsCdat = dat[,c(1:10, 21:40, 51:70, 81:87)]
+SvsCd = d[c(1:10, 21:40, 51:70, 81:87),]
+
+# create a natural cubic spline basis with 3 degrees of freedom
+matTimeSplineBasis <- ns(SvsCd$Timepoint, df=3)
+colnames(matTimeSplineBasis) <- paste0("spline", seq(1, dim(matTimeSplineBasis)[2]))
+
+# add spline basis into annotation data frame
+dfAnnotationDESeq2 <- cbind(SvsCd, matTimeSplineBasis)
+
+# create DESeq2 object with spline basis vectors as individual linear predictors
+dds <- DESeqDataSetFromMatrix(
+    countData = as.matrix(SvsCdat),
+    colData = dfAnnotationDESeq2,
+    design =~ 1 + Treatment + spline1 + spline2 + spline3+ Treatment:spline1 + 
+                  Treatment:spline2 + Treatment:spline3 )
+
+dds <- estimateSizeFactors(dds)
+dds <- estimateDispersionsGeneEst(dds)
+dds <- estimateDispersionsFit(dds)
+dds <- estimateDispersionsMAP(dds, outlierSD = 10)
+dds = nbinomLRT(dds, full = ~ 1 + Treatment + spline1 + spline2 + spline3+ Treatment:spline1 + 
+                  Treatment:spline2 + Treatment:spline3, reduced = ~ 1+ spline1 + spline2 + spline3)
+
+# extract results
+r = results(dds)
+r = na.omit(r)
+nrow(r[r$padj < 0.05,]) 
+write.table(r, file = "out/DESEq2_SvsC_splines.txt", row.names = T, quote = F, sep = "\t")
+```
+
+# S vs V comparison:
+
+```{r}
+SvsVdat = dat[,c(1:20, 31:50, 61:79)]
+SvsVd = d[c(1:20, 31:50, 61:79),]
+
+# create a natural cubic spline basis with 3 degrees of freedom
+matTimeSplineBasis <- ns(SvsVd$Timepoint, df=3)
+colnames(matTimeSplineBasis) <- paste0("spline", seq(1, dim(matTimeSplineBasis)[2]))
+
+# add spline basis into annotation data frame
+dfAnnotationDESeq2 <- cbind(SvsVd, matTimeSplineBasis)
+
+# create DESeq2 object with spline basis vectors as individual linear predictors
+dds <- DESeqDataSetFromMatrix(
+    countData = as.matrix(SvsVdat),
+    colData = dfAnnotationDESeq2,
+    design = ~ 1 + Treatment + spline1 + spline2 + spline3+ Treatment:spline1 + 
+                  Treatment:spline2 + Treatment:spline3)
+
+dds <- estimateSizeFactors(dds)
+dds <- estimateDispersionsGeneEst(dds)
+dds <- estimateDispersionsFit(dds)
+dds <- estimateDispersionsMAP(dds, outlierSD = 10) # same results with outlierSD = 5
+dds = nbinomLRT(dds, full = ~ 1 + Treatment + spline1 + spline2 + spline3+ Treatment:spline1 + 
+                  Treatment:spline2 + Treatment:spline3, reduced = ~ 1+ spline1 + spline2 + spline3)
+
+# extract results
+r = results(dds)
+r = na.omit(r)
+nrow(r[r$padj < 0.05,])
+write.table(r, file = "out/DESEq2_SvsV_splines.txt", row.names = T, quote = F, sep = "\t")
+```

@@ -1,0 +1,350 @@
+---
+title: "Principal Component Analysis"
+author: "Sofie Delbare"
+date: "February 17, 2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Input data & packages:
+
+```{r}
+library(edgeR); library(ggplot2); library(ggrepel); library(matrixStats); library(sva); library(ComplexHeatmap)
+library(wesanderson)
+cols = c(wes_palette("Darjeeling2")[2], "lightblue3", wes_palette("Darjeeling2")[3])
+
+dat = read.delim("data/log2_cpm.txt", header = T, as.is=T)
+dat = as.matrix(dat)
+design = read.delim("data/design.txt", header = T, as.is=T)
+
+new.names = c("A_SP-_0_5", "A_SP-_1", "A_SP-_2", "A_SP-_3", "A_SP-_4", "A_SP-_5", "A_SP-_6", "A_SP-_8", "A_SP-_12",
+              "A_SP-_24", "A_V_0_5", "A_V_1", "A_V_2", "A_V_3", "A_V_4", "A_V_5", "A_V_6", "A_V_8", "A_V_12",
+              "A_V_24", "A_SP+_0_5", "A_SP+_1", "A_SP+_2", "A_SP+_3", "A_SP+_4", "A_SP+_5", "A_SP+_6", "A_SP+_8",
+              "A_SP+_12", "A_SP+_24", "B_SP-_0_5", "B_SP-_1", "B_SP-_2", "B_SP-_3", "B_SP-_4", "B_SP-_5", "B_SP-_6",
+              "B_SP-_8", "B_SP-_12", "B_SP-_24", "B_V_0_5", "B_V_1", "B_V_2", "B_V_3", "B_V_4", "B_V_5", "B_V_6",
+              "B_V_8", "B_V_12", "B_V_24", "B_SP+_0_5", "B_SP+_1", "B_SP+_2", "B_SP+_3", "B_SP+_4", "B_SP+_5",
+              "B_SP+_6", "B_SP+_8", "B_SP+_12","B_SP+_24","C_SP-_0_5", "C_SP-_1", "C_SP-_2", "C_SP-_3", "C_SP-_4",
+              "C_SP-_5", "C_SP-_6", "C_SP-_8", "C_SP-_12", "C_SP-_24", "C_V_0_5", "C_V_1", "C_V_2", "C_V_3",
+              "C_V_4", "C_V_5", "C_V_6", "C_V_8", "C_V_12", "C_V_24", "C_SP+_0_5", "C_SP+_1", "C_SP+_2", "C_SP+_3",
+              "C_SP+_4", "C_SP+_5", "C_SP+_6", "C_SP+_8", "C_SP+_12", "C_SP+_24")
+```
+
+# PCA of all samples:
+
+```{r}
+i = 500
+rv <- rowVars(dat) 
+select <- order(rv, decreasing = TRUE)[seq_len(i)] 
+pca <- prcomp(t(dat[select,])) 
+percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2)) 
+
+f <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], 
+                timepoint = design$Timepoint,
+                name = new.names,
+                treatment = sapply(colnames(dat), function(x) strsplit(x, split = "_")[[1]][2]))
+
+ggplot(f, aes(PC1, PC2, color=as.character(treatment))) + 
+  geom_point(size=3) + 
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) + 
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  theme_classic(base_line_size = 1.2,
+                  base_rect_size = 1.2)+
+  scale_color_manual(values=cols)+
+  theme(axis.text=element_text(size=38, color = "black"), 
+        axis.title.x=element_text(size=38, margin=margin(15,0,0,0)),
+        axis.title.y=element_text(size=38, margin=margin(0,15,0,0)),
+        legend.position = "none")+
+  geom_text_repel(data = f, aes(label = name), 
+                   size = 8, fontface = "bold", box.padding = unit(0.35, "lines"),
+                  point.padding = unit(0.3, "lines"))#+
+```
+
+A random set of samples separates from the bulk of the samples. 
+These separated samples do not seem to have anything in common (# heads used, RNA concentration, date of RNA extraction, library concentration, library size).
+Which genes are driving this pattern?
+
+```{r}
+i = 100
+rv <- rowVars(dat) 
+select <- order(rv, decreasing = TRUE)[seq_len(i)] 
+genes = rownames(dat[select,]) 
+```
+
+This gene list contains many immune response genes, and also clock genes (among others).
+As seen below, the clock genes are indeed variable across the samples, but they follow a specific, regular pattern that is expected from genes whose expression follows a circadian rhythm. 
+Immune gene expression seems variable and random across samples. This is likely driving the outliers in the PCA. 
+
+```{r}
+colors = RColorBrewer::brewer.pal(10, "Paired")
+immune.gene = "FBgn0004240" # DptA - Diptericin A
+clock.gene= "FBgn0003068" # per - period
+colnames(dat) = new.names
+barplot(dat[immune.gene,], col = colors, las = 2, cex.names = 0.8, 
+        main = "DptA", ylab = "log2 cpm", cex.axis = 1.5, cex.lab = 1.5)
+barplot(dat[clock.gene,], col = colors, las = 2, cex.names = 0.8, main = "per",
+        ylab = "log2 cpm", cex.axis = 1.5, cex.lab = 1.5)
+
+immune = read.delim("data/Immune_genes.txt", header = T, as.is=T)
+immune = dat[rownames(dat) %in% immune[,1], ]
+Z = t(apply(immune, 1, function(x) scale(x, center = T, scale = T)))
+colnames(Z) = new.names
+ids = read.delim("data/all_ids.txt", header = T, as.is=T)
+idx = match(rownames(Z), ids[,2])
+rownames(Z) = ids[idx,1]
+ha = HeatmapAnnotation(treatment = rep(rep(c("SP-", "V", "SP+"), each = 10), 3),
+                       replicate = rep(c("A", "B", "C"), each = 30),
+                       timepoint = rep(c("0.5", "1", "2", "3", "4", "5", "6", "8", "12", "24"), 9),
+                       col = list(treatment = c("SP-" = "lightblue3",
+                                                "V" = wes_palette("Darjeeling2")[3], 
+                                                "SP+" = wes_palette("Darjeeling2")[2]),
+                                  replicate = c("A" = "lightgreen",
+                                                "B" = "lightyellow",
+                                                "C" = "thistle2"),
+                                  timepoint = c("0.5" = colors[1], "1" = colors[2], "2" = colors[3], 
+                                                "3" = colors[4], "4" = colors[5], "5" = colors[6], 
+                                                "6" = colors[7], "8" = colors[8], "12" = colors[9], 
+                                                "24" = colors[10])))
+Heatmap(Z, name = "log2CPM Z score", column_names_gp = gpar(fontsize = 8),
+        row_names_gp = gpar(fontsize = 8), top_annotation = ha)
+
+ha2 = HeatmapAnnotation(treatment = rep(rep(c("SP-", "V", "SP+"), each = 30), 1),
+                       replicate = rep(rep(c("A", "B", "C"), each = 3), 10),
+                       timepoint = rep(rep(c("0.5", "1", "2", "3", "4", "5", "6", "8", "12", "24"), 
+                                           each = 3), 3),
+                       col = list(treatment = c("SP-" = "lightblue3",
+                                                "V" = wes_palette("Darjeeling2")[3], 
+                                                "SP+" = wes_palette("Darjeeling2")[2]),
+                                  replicate = c("A" = "lightgreen",
+                                                "B" = "lightyellow",
+                                                "C" = "thistle2"),
+                                  timepoint = c("0.5" = colors[1], "1" = colors[2], "2" = colors[3], 
+                                                "3" = colors[4], "4" = colors[5], "5" = colors[6], 
+                                                "6" = colors[7], "8" = colors[8], "12" = colors[9], 
+                                                "24" = colors[10])))
+
+Heatmap(Z[,c(seq(1, 90, 30), seq(2, 90, 30), seq(3, 90, 30), seq(4, 90, 30), seq(5, 90, 30),
+             seq(6, 90, 30), seq(7, 90, 30), seq(8, 90, 30), seq(9, 90, 30), seq(10, 90, 30),
+             
+             seq(11, 90, 30), seq(12, 90, 30), seq(13, 90, 30), seq(14, 90, 30), seq(15, 90, 30),
+             seq(16, 90, 30), seq(17, 90, 30), seq(18, 90, 30), seq(19, 90, 30), seq(20, 90, 30),
+             
+             seq(21, 90, 30), seq(22, 90, 30), seq(23, 90, 30), seq(24, 90, 30), seq(25, 90, 30),
+             seq(26, 90, 30), seq(27, 90, 30), seq(28, 90, 30), seq(29, 90, 30), seq(30, 90, 30))], 
+        name = "log2CPM Z score",  column_names_gp = gpar(fontsize = 8), cluster_columns = F,
+        row_names_gp = gpar(fontsize = 8), top_annotation = ha2)
+```
+
+# Cluster samples based on immune gene expression:
+
+```{r}
+immune = read.delim("data/Immune_genes.txt", header = T, as.is=T)
+immune = dat[rownames(dat) %in% immune[,1], ]
+Z = t(apply(immune, 1, function(x) scale(x, center = T, scale = T)))
+colnames(Z) = colnames(immune)
+x = philentropy::distance(t(Z), method = "euclidean", use.row.names = T)
+clust = hclust(as.dist(x))
+plot(clust)
+clusters = cutree(clust, h = 8)
+table(clusters) 
+# clusters
+#  1  2  3  4  5  6  7 
+# 51 18  5  1  3 10  2
+
+# Add AS24 (cluster 4) to the closest, most similar cluster (cluster 3):
+idx = which(clusters == 4)
+clusters[idx] = 3
+write.table(clusters, file = "data/immune_clusters.txt", row.names = T, quote = F, sep = "\t")
+```
+
+# Use immune cluster assignment to correct for immune response with ComBat_Seq:
+
+```{r}
+immuneC = read.delim("data/immune_clusters.txt", header = T, as.is = T)
+counts = read.delim("data/raw_counts_filtered.txt", header = T, as.is=T)
+dat.corrected = ComBat_seq(counts = as.matrix(counts), 
+                           batch = factor(immuneC[,1]), group = design$Sample, full_mod = T)
+```
+
+Heatmap of normalized expression values of immune genes after ComBat_seq correction:
+
+```{r}
+y = DGEList(dat.corrected)
+y = calcNormFactors(y, method="TMM")
+lcpm.corrected = cpm(y, log=TRUE, prior.count=1)
+
+immune = read.delim("data/Immune_genes.txt", header = T, as.is=T)
+immune.lcpm = lcpm.corrected[rownames(lcpm.corrected) %in% immune[,1],]
+
+ids = read.delim("data/all_ids.txt", header = T, as.is=T)
+Z = t(apply(immune.lcpm, 1, function(x) scale(x, center = T, scale = T)))
+colnames(Z) = new.names
+idx = match(rownames(Z), ids[,2])
+rownames(Z) = ids[idx,1]
+
+colors = RColorBrewer::brewer.pal(10, "Paired")
+ha1 = HeatmapAnnotation(treatment = rep(rep(c("SP-", "V", "SP+"), each = 3), 10),
+                       replicate = rep(c("A", "B", "C"), each = 30),
+                       timepoint = rep(c("0.5", "1", "2", "3", "4", "5", "6", "8", "12", "24"), 9),
+                       col = list(treatment = c("SP-" = "lightblue3",
+                                                "V" = wes_palette("Darjeeling2")[3], 
+                                                "SP+" = wes_palette("Darjeeling2")[2]),
+                                  replicate = c("A" = "lightgreen",
+                                                "B" = "lightyellow",
+                                                "C" = "thistle2"),
+                                  timepoint = c("0.5" = colors[1], "1" = colors[2], "2" = colors[3], 
+                                                "3" = colors[4], "4" = colors[5], "5" = colors[6], 
+                                                "6" = colors[7], "8" = colors[8], "12" = colors[9], 
+                                                "24" = colors[10])))
+ha2 = HeatmapAnnotation(treatment = rep(rep(c("SP-", "V", "SP+"), each = 30), 1),
+                       replicate = rep(rep(c("A", "B", "C"), each = 3), 10),
+                       timepoint = rep(rep(c("0.5", "1", "2", "3", "4", "5", "6", "8", "12", "24"), 
+                                           each = 3), 3),
+                       col = list(treatment = c("SP-" = "lightblue3",
+                                                "V" = wes_palette("Darjeeling2")[3], 
+                                                "SP+" = wes_palette("Darjeeling2")[2]),
+                                  replicate = c("A" = "lightgreen",
+                                                "B" = "lightyellow",
+                                                "C" = "thistle2"),
+                                  timepoint = c("0.5" = colors[1], "1" = colors[2], "2" = colors[3], 
+                                                "3" = colors[4], "4" = colors[5], "5" = colors[6], 
+                                                "6" = colors[7], "8" = colors[8], "12" = colors[9], 
+                                                "24" = colors[10])))
+
+Heatmap(Z, name = "log2CPM Z score", column_names_gp = gpar(fontsize = 8),
+        row_names_gp = gpar(fontsize = 8), top_annotation = ha1)
+Heatmap(Z[,c(seq(1, 90, 30), seq(2, 90, 30), seq(3, 90, 30), seq(4, 90, 30), seq(5, 90, 30),
+             seq(6, 90, 30), seq(7, 90, 30), seq(8, 90, 30), seq(9, 90, 30), seq(10, 90, 30),
+             
+             seq(11, 90, 30), seq(12, 90, 30), seq(13, 90, 30), seq(14, 90, 30), seq(15, 90, 30),
+             seq(16, 90, 30), seq(17, 90, 30), seq(18, 90, 30), seq(19, 90, 30), seq(20, 90, 30),
+             
+             seq(21, 90, 30), seq(22, 90, 30), seq(23, 90, 30), seq(24, 90, 30), seq(25, 90, 30),
+             seq(26, 90, 30), seq(27, 90, 30), seq(28, 90, 30), seq(29, 90, 30), seq(30, 90, 30))], 
+        name = "log2CPM Z score",  column_names_gp = gpar(fontsize = 8), cluster_columns = F,
+        row_names_gp = gpar(fontsize = 8), top_annotation = ha2)
+```
+
+# PCA using ComBat_seq corrected counts:
+
+```{r}
+# highlight = one of Treatment, Sample, Timepoint or Replicate
+run_pca = function(gene_number, data, design, highlight, n, size){
+  rv <- rowVars(data) 
+  select <- order(rv, decreasing = TRUE)[seq_len(gene_number)] 
+  pca <- prcomp(t(data[select,])) 
+  percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2)) 
+  f <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], design, name = n)
+  if(highlight == "Treatment"){
+    h = as.character(f[,3])
+  }
+  if(highlight == "Replicate"){
+    h = as.character(f[,4])
+  }
+  if(highlight == "Timepoint"){
+    h = as.character(f[,5])
+  }
+  if(highlight == "Sample"){
+    h = as.character(f[,6])
+  }
+  ggplot(f, aes(PC1, PC2, color=h)) + 
+    geom_point(size=3) + 
+    xlab(paste0("PC1: ",percentVar[1],"% variance")) + 
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+    theme_classic(base_line_size = 1.2,
+                  base_rect_size = 1.2)+
+    scale_color_manual(values=cols)+
+    ggtitle("")+
+    theme(axis.text=element_text(size=38, color = "black"), 
+          axis.title.x=element_text(size=38, margin=margin(15,0,0,0)),
+          axis.title.y=element_text(size=38, margin=margin(0,15,0,0)))+
+    geom_text_repel(data = f, aes(label = name), 
+                    size = size, fontface = "bold", box.padding = unit(0.35, "lines"),
+                    point.padding = unit(0.3, "lines"))+
+    theme(legend.position = "none")
+}
+```
+
+Plots using all samples per replicate:
+
+```{r}
+run_pca(gene_number = 500, data = lcpm.corrected[,c(1:30)], 
+        design = design[c(1:30),], highlight = "Treatment", n = new.names[1:30], size = 14)
+run_pca(gene_number = 500, data = lcpm.corrected[,c(31:60)], 
+        design = design[c(31:60),], highlight = "Treatment", n = new.names[31:60], size = 14)
+run_pca(gene_number = 500, data = lcpm.corrected[,c(61:90)], 
+        design = design[c(61:90),], highlight = "Treatment", n = new.names[61:90], size = 14)
+```
+
+Outliers in replicate C: CV6, CSP+2, CSP+3
+
+# Remove outlier samples:
+
+```{r}
+idx = which(colnames(lcpm.corrected) == "C_V_6")
+lcpm.updated = lcpm.corrected[,-idx]
+design.updated = design[-idx,]
+new.names = new.names[-idx]
+idx = which(colnames(lcpm.updated) %in% c("C_C_2", "C_C_3"))
+lcpm.updated = lcpm.updated[,-idx]
+design.updated = design.updated[-idx,]
+new.names= new.names[-c(82, 83)]
+```
+
+# Rerun PCA:
+
+```{r}
+i = 500
+rv <- rowVars(lcpm.updated) 
+select <- order(rv, decreasing = TRUE)[seq_len(i)] 
+pca <- prcomp(t(lcpm.updated[select,])) 
+percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2)) 
+
+new.names = c("A_SP-_0_5", "A_SP-_1", "A_SP-_2", "A_SP-_3", "A_SP-_4", "A_SP-_5", "A_SP-_6", "A_SP-_8", "A_SP-_12",
+              "A_SP-_24", "A_V_0_5", "A_V_1", "A_V_2", "A_V_3", "A_V_4", "A_V_5", "A_V_6", "A_V_8", "A_V_12",
+              "A_V_24", "A_SP+_0_5", "A_SP+_1", "A_SP+_2", "A_SP+_3", "A_SP+_4", "A_SP+_5", "A_SP+_6", "A_SP+_8",
+              "A_SP+_12", "A_SP+_24", "B_SP-_0_5", "B_SP-_1", "B_SP-_2", "B_SP-_3", "B_SP-_4", "B_SP-_5", "B_SP-_6",
+              "B_SP-_8", "B_SP-_12", "B_SP-_24", "B_V_0_5", "B_V_1", "B_V_2", "B_V_3", "B_V_4", "B_V_5", "B_V_6",
+              "B_V_8", "B_V_12", "B_V_24", "B_SP+_0_5", "B_SP+_1", "B_SP+_2", "B_SP+_3", "B_SP+_4", "B_SP+_5",
+              "B_SP+_6", "B_SP+_8", "B_SP+_12","B_SP+_24","C_SP-_0_5", "C_SP-_1", "C_SP-_2", "C_SP-_3", "C_SP-_4",
+              "C_SP-_5", "C_SP-_6", "C_SP-_8", "C_SP-_12", "C_SP-_24", "C_V_0_5", "C_V_1", "C_V_2", "C_V_3",
+              "C_V_4", "C_V_5",  "C_V_8", "C_V_12", "C_V_24", "C_SP+_0_5", "C_SP+_1", 
+              "C_SP+_4", "C_SP+_5", "C_SP+_6", "C_SP+_8", "C_SP+_12", "C_SP+_24")
+
+f <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], 
+                timepoint = design.updated$Timepoint,
+                name = new.names,
+                treatment = sapply(colnames(lcpm.updated), function(x) strsplit(x, split = "_")[[1]][2]))
+
+ggplot(f, aes(PC1, PC2, color=as.character(treatment))) + 
+  geom_point(size=3) + 
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) + 
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  theme_classic(base_line_size = 1.2,
+                  base_rect_size = 1.2)+
+  scale_color_manual(values=cols)+
+  theme(axis.text=element_text(size=38, color = "black"), 
+        axis.title.x=element_text(size=38, margin=margin(15,0,0,0)),
+        axis.title.y=element_text(size=38, margin=margin(0,15,0,0)),
+        legend.position = "none")+
+  geom_text_repel(data = f, aes(label = name), 
+                   size = 8, fontface = "bold", box.padding = unit(0.35, "lines"),
+                  point.padding = unit(0.3, "lines"))+
+  stat_ellipse(size = 2)
+```
+
+# Save files:
+
+```{r}
+write.table(design.updated, file = "data/design_updated.txt", row.names = T, quote = F, sep = "\t")
+write.table(lcpm.updated, file = "data/lcpm_updated.txt", row.names = T, quote = F, sep = "\t")
+idx = which(colnames(dat.corrected) %in% c("C_V_6", "C_C_2", "C_C_3"))
+write.table(dat.corrected[,-idx], file = "data/raw_corrected_counts_filtered_updated.txt", row.names = T, quote = F, sep = "\t")
+
+# To obtain cpm:
+y = DGEList(dat.corrected)
+y = calcNormFactors(y, method="TMM")
+cpm.corrected = cpm(y)
+write.table(cpm.corrected[,-idx], file = "data/cpm_updated.txt", row.names = T, quote = F, sep = "\t")
+```
+

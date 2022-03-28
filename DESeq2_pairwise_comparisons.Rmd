@@ -1,0 +1,155 @@
+---
+title: "DESeq2 pairwise comparisons"
+author: "Sofie Delbare"
+date: "February 17, 2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+library(DESeq2); library(edgeR); library(ggplot2)
+```
+
+# Input data: ComBat_seq corrected raw counts; CV6, CC2 and CC3 removed.
+
+```{r}
+d = read.delim("data/design_updated.txt", header = T, as.is = T)
+counts = read.delim("data/raw_corrected_counts_filtered_updated.txt", header = T, as.is = T)
+```
+
+# Make DESeq data object:
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = as.matrix(counts), colData = d, design = ~ Sample)
+```
+
+# Pairwise comparisons across treatments: C vs V
+
+```{r}
+contrasts.CvsVoriginal = list(c("Sample", "C_0_5", "V_0_5"), 
+                 c("Sample", "C_1", "V_1"),
+                 c("Sample", "C_2", "V_2"),
+                 c("Sample", "C_3", "V_3"),
+                 c("Sample", "C_4", "V_4"),
+                 c("Sample", "C_5", "V_5"),
+                 c("Sample", "C_6", "V_6"),
+                 c("Sample", "C_8", "V_8"),
+                 c("Sample", "C_12", "V_12"), 
+                 c("Sample", "C_24", "V_24"))
+
+contrasts.CvsVshrunken = list(c("Sample_C_0_5_vs_V_0_5"), 
+                 c("Sample_C_1_vs_V_1"),
+                 c("Sample_C_2_vs_V_2"),
+                 c("Sample_C_3_vs_V_3"),
+                 c("Sample_C_4_vs_V_4"),
+                 c("Sample_C_5_vs_V_5"),
+                 c("Sample_C_6_vs_V_6"),
+                 c("Sample_C_8_vs_V_8"),
+                 c("Sample_C_12_vs_V_12"), 
+                 c("Sample_C_24_vs_V_24"))
+
+reference = c("V_0_5", "V_1", "V_2", "V_3", "V_4", "V_5", "V_6", "V_8", "V_12", "V_24")
+
+CvsVoriginal = list()
+CvsVshrunken = list()
+
+for(j in 1:length(contrasts.CvsVoriginal)){
+  dds$Sample <- relevel(dds$Sample, ref = reference[j])
+  dds_res = DESeq(dds)
+  res = results(dds_res, contrast=contrasts.CvsVoriginal[[j]], alpha = 0.05)
+  resShrunken = lfcShrink(dds_res, coef=contrasts.CvsVshrunken[[j]], res=res, type="apeglm")
+  CvsVshrunken[[j]] = resShrunken
+  CvsVoriginal[[j]] = res}
+
+CvsVresults = list(CvsVoriginal, CvsVshrunken)
+names(CvsVresults) = c("CvsVoriginal", "CvsVshrunken")
+save(CvsVresults, file= "out/DESeq2_CvsV.RData")
+```
+
+# Pairwise comparisons across treatments: S vs V
+
+```{r}
+contrasts.SvsVoriginal = list(c("Sample", "S_0_5", "V_0_5"), 
+                 c("Sample", "S_1", "V_1"),
+                 c("Sample", "S_2", "V_2"),
+                 c("Sample", "S_3", "V_3"),
+                 c("Sample", "S_4", "V_4"),
+                 c("Sample", "S_5", "V_5"),
+                 c("Sample", "S_6", "V_6"),
+                 c("Sample", "S_8", "V_8"),
+                 c("Sample", "S_12", "V_12"), 
+                 c("Sample", "S_24", "V_24"))
+
+contrasts.SvsVshrunken = list(c("Sample_S_0_5_vs_V_0_5"), 
+                 c("Sample_S_1_vs_V_1"),
+                 c("Sample_S_2_vs_V_2"),
+                 c("Sample_S_3_vs_V_3"),
+                 c("Sample_S_4_vs_V_4"),
+                 c("Sample_S_5_vs_V_5"),
+                 c("Sample_S_6_vs_V_6"),
+                 c("Sample_S_8_vs_V_8"),
+                 c("Sample_S_12_vs_V_12"), 
+                 c("Sample_S_24_vs_V_24"))
+
+reference = c("V_0_5", "V_1", "V_2", "V_3", "V_4", "V_5", "V_6", "V_8", "V_12", "V_24")
+
+SvsVoriginal = list()
+SvsVshrunken = list()
+
+for(j in 1:length(contrasts.SvsVoriginal)){
+  dds$Sample <- relevel(dds$Sample, ref = reference[j])
+  dds_res = DESeq(dds)
+  res = results(dds_res, contrast=contrasts.SvsVoriginal[[j]], alpha = 0.05)
+  resShrunken = lfcShrink(dds_res, coef=contrasts.SvsVshrunken[[j]], res=res, type="apeglm")
+  SvsVshrunken[[j]] = resShrunken
+  SvsVoriginal[[j]] = res}
+
+SvsVresults = list(SvsVoriginal, SvsVshrunken)
+names(SvsVresults) = c("SvsVoriginal", "SvsVshrunken")
+save(SvsVresults, file= "out/DESeq2_SvsV.RData")
+```
+
+# Pairwise comparisons across treatments: S vs C
+
+```{r}
+contrasts.SvsCoriginal = list(c("Sample", "S_0_5", "C_0_5"), 
+                 c("Sample", "S_1", "C_1"),
+                 c("Sample", "S_2", "C_2"),
+                 c("Sample", "S_3", "C_3"),
+                 c("Sample", "S_4", "C_4"),
+                 c("Sample", "S_5", "C_5"),
+                 c("Sample", "S_6", "C_6"),
+                 c("Sample", "S_8", "C_8"),
+                 c("Sample", "S_12", "C_12"), 
+                 c("Sample", "S_24", "C_24"))
+
+contrasts.SvsCshrunken = list(c("Sample_S_0_5_vs_C_0_5"), 
+                 c("Sample_S_1_vs_C_1"),
+                 c("Sample_S_2_vs_C_2"),
+                 c("Sample_S_3_vs_C_3"),
+                 c("Sample_S_4_vs_C_4"),
+                 c("Sample_S_5_vs_C_5"),
+                 c("Sample_S_6_vs_C_6"),
+                 c("Sample_S_8_vs_C_8"),
+                 c("Sample_S_12_vs_C_12"), 
+                 c("Sample_S_24_vs_C_24"))
+
+reference = c("C_0_5", "C_1", "C_2", "C_3", "C_4", "C_5", "C_6", "C_8", "C_12", "C_24")
+
+SvsCoriginal = list()
+SvsCshrunken = list()
+
+for(j in 1:length(contrasts.SvsCoriginal)){
+  dds$Sample <- relevel(dds$Sample, ref = reference[j])
+  dds_res = DESeq(dds)
+  res = results(dds_res, contrast=contrasts.SvsCoriginal[[j]], alpha = 0.05)
+  resShrunken = lfcShrink(dds_res, coef=contrasts.SvsCshrunken[[j]], res=res, type="apeglm")
+  SvsCshrunken[[j]] = resShrunken
+  SvsCoriginal[[j]] = res}
+
+SvsCresults = list(SvsCoriginal, SvsCshrunken)
+names(SvsCresults) = c("SvsCoriginal", "SvsCshrunken")
+save(SvsCresults, file= "out/DESeq2_SvsC.RData")
+```

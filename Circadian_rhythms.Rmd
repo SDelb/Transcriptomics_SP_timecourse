@@ -1,0 +1,50 @@
+---
+title: "Circadian rhythms on DE features with 1.3 fold change"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+ids = read.delim("data/all_ids.txt", header = T, as.is = T)
+library(MetaCycle)
+library(tidyr)
+options(stringsAsFactors=FALSE)
+```
+
+Normalized log2-transformed counts for DE genes and exons:
+
+```{r}
+load("Cluster_analysis/2022_02_priors/lcpm_gene_and_exon.RData")
+
+load("Cluster_analysis/2022_02_clusters/llr2_clusters_early_2022.RData")
+genes = unlist(sapply(llr2.list, function(x) x[,1]))
+load("Cluster_analysis/2022_02_clusters/llr2_clusters_middle_2022.RData")
+genes = c(genes, unlist(sapply(llr2.list, function(x) x[,1])))
+load("Cluster_analysis/2022_02_clusters/llr2_clusters_late_2022.RData")
+genes = c(genes, unlist(sapply(llr2.list, function(x) x[,1])))
+length(genes) # 1305 
+```
+
+Run metacycle on genes and exons:  
+
+```{r}
+V = lcpm[rownames(lcpm) %in% genes, 29:57]
+V = cbind(rownames(V), V)
+write.table(V, file = "data/V_input_MetaCycle.txt", row.names = F, quote = F, sep = "\t")
+
+tp = c(rep(c(0.5, 1, 2, 3, 4, 5, 6, 8, 12, 24), 2), c(0.5, 1, 2, 3, 4, 5, 8, 12, 24))
+
+test = meta2d(infile = "data/V_input_MetaCycle.txt", outdir = "metaout", 
+              filestyle = "txt", timepoints = tp, 
+              minper = 22, maxper = 26, cycMethod = c("LS"),
+              analysisStrategy = "auto", outputFile = F,
+              outIntegration = "both", adjustPhase = "predictedPer",
+              combinePvalue = "bonferroni", weightedPerPha = FALSE, 
+              ARSmle = "auto", ARSdefaultPer = 24, outRawData = FALSE, 
+              releaseNote = F, outSymbol = "", parallelize = FALSE, nCores = 1, inDF = NULL)
+
+LS = test$LS 
+circadian = (LS[LS$BH.Q<0.3, 1]) 
+write.table(circadian, file = "out/Metacycle_V_q03.txt", row.names = F, quote = F, sep = "\t")
+```

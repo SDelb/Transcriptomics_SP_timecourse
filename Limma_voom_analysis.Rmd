@@ -1,0 +1,92 @@
+---
+title: "Limma-voom"
+author: "Sofie Delbare"
+date: "January 15, 2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Packages and datasets:
+
+```{r}
+library(edgeR); library(splines)
+dat = read.delim("data/raw_corrected_counts_filtered_updated.txt", header=T, as.is=T)
+d = read.delim("data/design_updated.txt", header = T, as.is = T)
+```
+
+# Compare C vs V:
+
+```{r}
+CvsV = dat[,c(11:30, 41:60, 71:87)]
+CvsVd = d[c(11:30, 41:60, 71:87),]
+
+df = 3
+NS = ns(CvsVd$Timepoint, df)
+group = factor(CvsVd$Treatment)
+design = model.matrix(~ group*NS)
+
+CvsVdge = DGEList(counts = CvsV)
+CvsVdge = calcNormFactors(CvsVdge, method = "TMM")
+
+# use voom transform for precision weights
+voomdat = voom(CvsVdge, design=design, normalize.method='none', plot=T)
+
+# fit linear models to univariate time course trajectories
+fit = lmFit(voomdat, design = design, weights=NULL)
+fit = eBayes(fit, trend=TRUE)
+res = topTable(fit, coef=6:8, number = nrow(dat)) 
+nrow(res[res$adj.P.Val < 0.05,]) 
+write.table(res, file = "out/limmavoom_CvsV.txt", row.names = T, quote = F, sep = "\t")    
+```
+
+# Compare S vs V:
+
+```{r}
+SvsV = dat[,c(1:20, 31:50, 61:79)]
+SvsVd = d[c(1:20, 31:50, 61:79),]
+
+df = 3
+NS = ns(SvsVd$Timepoint, df)
+group = factor(SvsVd$Treatment)
+design = model.matrix(~ group*NS)
+
+SvsVdge = DGEList(counts = SvsV)
+SvsVdge = calcNormFactors(SvsVdge, method = "TMM")
+
+# use voom transform for precision weights
+voomdat = voom(SvsVdge, design=design, normalize.method='none', plot=T)
+
+# fit linear models to univariate time course trajectories
+fit = lmFit(voomdat, design = design, weights=NULL)
+fit = eBayes(fit, trend=TRUE)
+res = topTable(fit, coef=6:8, number = nrow(dat)) 
+nrow(res[res$adj.P.Val < 0.05,]) 
+write.table(res, file = "out/limmavoom_SvsV.txt", row.names = T, quote = F, sep = "\t")    
+```
+
+# Compare S vs C:
+
+```{r}
+SvsC = dat[,c(1:10, 21:40, 51:70, 81:87)]
+SvsCd = d[c(1:10, 21:40, 51:70, 81:87),]
+
+df = 3
+NS = ns(SvsCd$Timepoint, df)
+group = factor(SvsCd$Treatment)
+design = model.matrix(~ group*NS)
+
+SvsCdge = DGEList(counts = SvsC)
+SvsCdge = calcNormFactors(SvsCdge, method = "TMM")
+
+# use voom transform for precision weights
+voomdat = voom(SvsCdge, design=design, normalize.method='none', plot=T)
+
+# fit linear models to univariate time course trajectories
+fit = lmFit(voomdat, design = design, weights=NULL)
+fit = eBayes(fit, trend=TRUE)
+res = topTable(fit, coef=6:8, number = nrow(dat)) 
+nrow(res[res$adj.P.Val < 0.05,]) 
+write.table(res, file = "out/limmavoom_SvsC.txt", row.names = T, quote = F, sep = "\t")    
+```
+

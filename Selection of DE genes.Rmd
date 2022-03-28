@@ -1,0 +1,178 @@
+---
+title: "Selection of DE genes"
+author: "Sofie Delbare"
+date: "February 1, 2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Select genes that are:
+- DE between at least 2 treatments based on all 3 dynamic DE methods, or
+- DE between at least 2 treatments based on only 2/3 dynamic methods, but that also have at least one 2-fold change in expression. 
+
+# DE in Limma-Voom:
+
+```{r}
+LV1 = read.delim("out/limmavoom_CvsV.txt", header = T, as.is = T)
+LV1 = rownames(LV1[LV1$adj.P.Val < 0.05, ])
+LV2 = read.delim("out/limmavoom_SvsC.txt", header = T, as.is = T)
+LV2 = rownames(LV2[LV2$adj.P.Val < 0.05, ])
+LV3 = read.delim("out/limmavoom_SvsV.txt", header = T, as.is = T)
+LV3 = rownames(LV3[LV3$adj.P.Val < 0.05, ])
+```
+
+# DE in ImpulseDE2:
+
+```{r}
+load("out/CvsV_df.RData")
+Impulse1 = rownames(df[df$padj < 0.05, ])
+load("out/SvsC_df.RData") # df
+Impulse2 = rownames(df[df$padj < 0.05, ])
+load("out/SvsV_df.RData")
+Impulse3 = rownames(df[df$padj < 0.05, ])
+```
+
+# DE in DESeq2 spline fit:
+
+```{r}
+deseq1 = read.delim("out/DESeq2_CvsV_splines.txt", header = T, as.is = T)
+deseq1 = rownames(deseq1[deseq1$padj < 0.05, ])
+deseq2 = read.delim("out/DESEq2_SvsC_splines.txt", header = T, as.is = T)
+deseq2 = rownames(deseq2[deseq2$padj < 0.05, ])
+deseq3 = read.delim("out/DESEq2_SvsV_splines.txt", header = T, as.is = T)
+deseq3 = rownames(deseq3[deseq3$padj < 0.05, ])
+```
+
+# Gene selection:
+
+```{r}
+DE_3methods = unique(c(
+  intersect(LV1, intersect(Impulse1, deseq1)),
+  intersect(LV2, intersect(Impulse2, deseq2)),
+  intersect(LV3, intersect(Impulse3, deseq3)))) # 2240 genes
+save(DE_3methods, file = "out/DE_genes_3methods.RData")
+
+load("out/DESeq2_CvsV.RData") 
+set1 = lapply(CvsVresults[[2]], function(x) x[,2])
+set1 = do.call(cbind, set1)
+rownames(set1) = rownames(CvsVresults[[2]][[1]])
+set1_2fold = apply(set1, 1, function(x) any(abs(x) >= 1))
+set1_2fold = rownames(set1)[set1_2fold]
+
+load("out/DESeq2_SvsC.RData") 
+set2 = lapply(SvsCresults[[2]], function(x) x[,2])
+set2 = do.call(cbind, set2)
+rownames(set2) = rownames(SvsCresults[[2]][[1]])
+set2_2fold = apply(set2, 1, function(x) any(abs(x) >= 1))
+set2_2fold = rownames(set2)[set2_2fold]
+
+load("out/DESeq2_SvsV.RData")
+set3 = lapply(SvsVresults[[2]], function(x) x[,2])
+set3 = do.call(cbind, set3)
+rownames(set3) = rownames(SvsVresults[[2]][[1]])
+set3_2fold = apply(set3, 1, function(x) any(abs(x) >= 1))
+set3_2fold = rownames(set3)[set3_2fold]
+
+DE_2methods2fold = unique(c(
+  intersect(c(intersect(LV1, Impulse1), intersect(LV1, deseq1), intersect(Impulse1, deseq1)), set1_2fold),
+  intersect(c(intersect(LV2, Impulse2), intersect(LV2, deseq2), intersect(Impulse2, deseq2)), set2_2fold),
+  intersect(c(intersect(LV3, Impulse3), intersect(LV3, deseq3), intersect(Impulse3, deseq3)), set3_2fold))) # 223 genes
+```
+
+# Subset with more liberal log2 fold change cutoffs:
+
+```{r}
+DE = unique(c(DE_2methods2fold, DE_3methods))
+
+fc = cbind(set1, set2, set3)
+
+DE_cutoff1.3 = sapply(DE, function(x) any(abs(fc[rownames(fc) == x, ]) >= log2(1.3))) 
+DE_cutoff1.3 = DE[DE_cutoff1.3] # 1229 genes
+DE_cutoff1.5 = sapply(DE, function(x) any(abs(fc[rownames(fc) == x, ]) >= log2(1.5)))  
+DE_cutoff1.5 = DE[DE_cutoff1.5] # 666 genes
+
+write.table(DE_cutoff1.3, file = "out/DE_genes_shrunken1.3fold.txt", row.names = F, quote = F, sep = "\t")
+write.table(DE_cutoff1.5, file = "out/DE_genes_shrunken1.5fold.txt", row.names = F, quote = F, sep = "\t")
+```
+
+
+
+
+Select genes that have padj < 0.05 in at least 2/3 dynamic DE methods. 
+Shrunken log2 fold change cutoff between treatments: 1.5 or 1.3 at least at one time point.
+
+# DE in Limma-Voom:
+
+```{r}
+set1 = read.delim("out/limmavoom_CvsV.txt", header = T, as.is = T)
+set2 = read.delim("out/limmavoom_SvsC.txt", header = T, as.is = T)
+set3 = read.delim("out/limmavoom_SvsV.txt", header = T, as.is = T)
+DE_LV = unique(c(rownames(set1[set1$adj.P.Val < 0.05, ]), rownames(set2[set2$adj.P.Val < 0.05, ]), rownames(set3[set3$adj.P.Val < 0.05, ])))
+```
+
+# DE in ImpulseDE2:
+
+```{r}
+load("out/SvsC_df.RData") # df
+set1 = rownames(df[df$padj < 0.05, ])
+load("out/SvsV_df.RData")
+set2 = rownames(df[df$padj < 0.05, ])
+load("out/CvsV_df.RData")
+set3 = rownames(df[df$padj < 0.05, ])
+DE_Impulse = unique(c(set1, set2, set3))
+```
+
+# DE in DESeq2 spline fit:
+
+```{r}
+set1 = read.delim("out/DESeq2_CvsV_splines.txt", header = T, as.is = T)
+set2 = read.delim("out/DESEq2_SvsC_splines.txt", header = T, as.is = T)
+set3 = read.delim("out/DESEq2_SvsV_splines.txt", header = T, as.is = T)
+DE_DESeq = unique(c(rownames(set1[set1$padj < 0.05, ]), rownames(set2[set2$padj < 0.05, ]), rownames(set3[set3$padj < 0.05, ])))
+```
+
+# DE in at least 2/3 methods:
+
+```{r}
+DE = c(DE_LV, DE_Impulse, DE_DESeq)
+t = table(DE)
+DE = names(which(t >= 2))
+length(DE) # 3644 genes
+```
+
+# Selection of DE genes using shrunken log2 fold changes:
+
+```{r}
+load("out/DESeq2_CvsV.RData") 
+set1 = lapply(CvsVresults[[2]], function(x) x[,2])
+set1 = do.call(cbind, set1)
+rownames(set1) = rownames(CvsVresults[[2]][[1]])
+
+load("out/DESeq2_SvsC.RData") 
+set2 = lapply(SvsCresults[[2]], function(x) x[,2])
+set2 = do.call(cbind, set2)
+rownames(set2) = rownames(SvsCresults[[2]][[1]])
+
+load("out/DESeq2_SvsV.RData")
+set3 = lapply(SvsVresults[[2]], function(x) x[,2])
+set3 = do.call(cbind, set3)
+rownames(set3) = rownames(SvsVresults[[2]][[1]])
+
+all(rownames(set1) == rownames(set2))
+all(rownames(set2) == rownames(set3))
+
+fc = cbind(set1, set2, set3)
+
+cutoff1.5 = sapply(DE, function(x) any(abs(fc[rownames(fc) == x, ]) >= log2(1.5) ))
+cutoff1.5 = DE[cutoff1.5] # 774 genes
+
+paper1.5 = read.delim("out/DE_genes_shrunken1.5fold.txt", header = T, as.is = T)
+ids = read.delim("data/all_ids.txt", header = T, as.is = T)
+sort(ids[ids[,2] %in% setdiff(cutoff1.5, paper1.5[,1]), 1])
+CPMplot(ids[ids[,1] == "Mcm2", 2])
+
+cutoff1.3 = sapply(DE, function(x) any(abs(fc[rownames(fc) == x, ]) >= log2(1.3) ))
+cutoff1.3 = DE[cutoff1.3] # 1552 genes
+```
+
