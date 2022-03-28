@@ -1,0 +1,196 @@
+---
+title: "Seurat"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Start from loom file from Scope:
+
+```{r}
+library(loomR)
+lfile <- connect(filename = "s_fca_biohub_head_10x.loom", mode = "r+", skip.validate = T)
+```
+
+Retrieve counts for only female cells:
+
+```{r}
+ids = lfile[["col_attrs/CellID"]][]
+ids = sapply(ids, function(x) strsplit(x, split = "_")[[1]][4])
+unique(ids) # "MaleFemale" "Male"       "Female" 
+female.idx = which(ids == "Female")
+length(ids) # 100,527
+length(female.idx) # 49,105 cells 
+female.counts = lfile[["matrix"]][female.idx,]
+
+gene.names <- lfile[["row_attrs/Gene"]][]
+colnames(female.counts) = gene.names
+rownames(female.counts) = lfile[["col_attrs/CellID"]][female.idx]
+```
+
+Retrieve metadata for those cells:
+
+```{r}
+annotation_broad = lfile[["col_attrs/annotation_broad"]][female.idx]
+# [1] "unannotated"              "neuron"
+# [3] "sensory neuron"           "glial cell"
+# [5] "epithelial cell"          "male reproductive system"
+# [7] "muscle cell"              "fat cell"
+# [9] "artefact"                 "hemocyte"
+```
+
+Remove cells that are annotated as "artefact". 
+
+```{r}
+idx = which(annotation == "artefact")
+annotation_broad = annotation_broad[-idx]
+female.counts = female.counts[-idx,]
+```
+
+Save data:
+
+```{r}
+save(annotation_broad, file = "head_female_cells_annotation_broad.RData")
+save(female.counts, file = "sc_head_female_full_broad.RData")
+lfile$close_all()
+```
+
+# Now read into Seurat and assign cells to pre-defined annotated clusters:
+
+```{r}
+library(Seurat)
+load("sc_head_female_full_broad.RData")
+sch <- CreateSeuratObject(counts = t(female.counts), project = "sc_head_female", min.cells = 3, min.features = 200)
+```
+
+Add the pre-defined cluster annotations:
+
+```{r}
+head(sch@meta.data)
+load("head_female_cells_annotation_broad.RData")
+sch@meta.data$clusters <- annotation_broad
+```
+
+Normalize and scale the data:
+
+```{r}
+sch <- NormalizeData(sch)
+```
+
+select variable genes which will be used for PCA.
+
+```{r}
+sch <- FindVariableFeatures(sch, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(sch)
+sch <- ScaleData(sch, features = all.genes)
+```
+
+Run PCA and determine the dimensionality of the dataset:
+
+```{r}
+sch <- RunPCA(sch, features = VariableFeatures(object = sch), npcs = 100)
+ElbowPlot(sch, ndims = 100)
+```
+
+UMAP:
+
+```{r}
+sch <- RunUMAP(sch, dims = 1:80)
+DimPlot(sch, reduction = "umap")
+```
+
+Clustering of cells:
+Cluster/ cell type assignment is already contained in sch@meta.data$clusters
+
+```{r}
+head(Idents(sch))
+Idents(sch) <- annotation_broad
+head(Idents(sch), 5)
+saveRDS(sch, file = "sch_female_head.rds")
+```
+
+# Prepare a signature matrix for scMappR:
+
+For scMappR, we need a "signature matrix", which is a gene x celltype matrix that contains the log2 fold change of each cell type versus all other cell types (multiplied by p-value: -log10(Padj)*sign(FC)).
+
+```{r}
+all_markers = list()
+for(i in 1:length(unique(annotation_broad))){
+  markers = FindMarkers(sch, ident.1 = unique(annotation_broad)[i]) # no specified log2 fc cutoff, as in code from scMappR on github
+  save(markers, file = paste(paste("headMarkersBroad/markers", i, sep = "_"), "RData", sep = "."))
+}
+```
+
+Calculate the signature matrix: 
+-log10(Padj)*sign(l2FC) 
+This should reflect the rank of each gene in each cell type. 
+
+(See scMappR function Seurat_to_generes)
+
+```{r}
+load("headMarkersBroad/markers_1.RData")
+unanotated = markers
+load("headMarkersBroad/markers_2.RData")
+neuron = markers
+load("headMarkersBroad/markers_3.RData")
+sensory_neuron = markers
+load("headMarkersBroad/markers_4.RData")
+glial_cell = markers
+load("headMarkersBroad/markers_5.RData")
+epithelial_cell = markers
+load("headMarkersBroad/markers_6.RData")
+male_reproductive_system = markers
+load("headMarkersBroad/markers_7.RData")
+muscle_cell = markers
+load("headMarkersBroad/markers_8.RData")
+fat_cell = markers
+load("headMarkersBroad/markers_9.RData")
+hemocyte = markers
+
+markers = list(unanotated, neuron, sensory_neuron, glial_cell, epithelial_cell, male_reproductive_system, muscle_cell, 
+               fat_cell, hemocyte)
+names(markers) = c("unanotated", "neuron", "sensory_neuron", "glial_cell", "epithelial_cell", "male_reproductive_system", 
+                   "muscle_cell", "fat_cell", "hemocyte")
+
+# Number of markers in each cell type (number of rows):
+unlist(sapply(markers, function(x) nrow(x)))
+
+# Select only markers with p_val_adj < 0.05:
+markers = lapply(markers, function(x) x[x$p_val_adj < 0.05,] )
+unlist(sapply(markers, function(x) nrow(x)))
+
+# Make a list like the generes object in scMappR: 
+markers = lapply(markers, function(x) x[,c(5,2)])
+# colnames should be: p_val_adj avg_logFC
+m = list()
+for(i in 1:length(markers)){
+  x = markers[[i]]
+  colnames(x) = c("p_val_adj", "avg_logFC")
+  m[[i]] = x
+}
+names(m) = names(markers)
+# Turn generes (m) into signature matrix: like in smMappR function generes_to_heatmap
+genes_uni = unique(unlist(sapply(m, function(x) rownames(x))))
+generes = m
+scmappr <- matrix(0, nrow = length(genes_uni), ncol = length(names(generes))) 
+rownames(scmappr) <- genes_uni
+colnames(scmappr) <- names(generes)
+
+for(i in 1:length(generes)) {
+  rnk <- -1*log10(generes[[i]]$p_val_adj) * sign(generes[[i]]$avg_logFC)
+  # compute the padj and fold change into the rank
+  names(rnk) <- rownames(generes[[i]])
+  scmappr[names(rnk),i] <- unname(rnk)
+}
+
+wilcoxon_rank_mat_t <- scmappr
+wilcoxon_rank_mat_t[is.infinite(wilcoxon_rank_mat_t) & wilcoxon_rank_mat_t < 0] <-
+  min(wilcoxon_rank_mat_t[is.finite(wilcoxon_rank_mat_t)])
+wilcoxon_rank_mat_t[is.infinite(wilcoxon_rank_mat_t) & wilcoxon_rank_mat_t > 0] <- max(wilcoxon_rank_mat_t[is.finite(wilcoxon_rank_mat_t)])
+
+# Inf occurs in cases where a gene was not listed as a marker of a cell type. 
+# To remove Inf values, these values are set to the minimal finite value in one of the other cell types. 
+
+signature.matrix = wilcoxon_rank_mat_t
+save(signature.matrix, file = "out/signature_matrix_broad.RData")
+```

@@ -1,0 +1,197 @@
+---
+title: "scMappR"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+https://cran.r-project.org/web/packages/scMappR/vignettes/scMappR_Vignette.html
+https://academic.oup.com/nargab/article/3/1/lqab011/6148840#supplementary-data
+
+
+# Installation:
+
+```{r}
+#BiocManager::install("pcaMethods")
+#BiocManager::install("GSVA")
+#install.packages("scMappR")
+library(scMappR)
+```
+
+
+# Bulk RNA-seq input:
+
+1. gene x replicate normalized count matrix
+
+2. a list of DEGs with gene name, p-value and log2 fold change
+
+Will run scMappR for each time point separately, each time comparing mated and virgin females. 
+Only for DE genes (not exons).
+
+Input files:
+
+```{r}
+cpm = read.delim("../data/cpm_updated.txt", header = T, as.is = T)
+cpm = cpm[, -grep("S", colnames(cpm))]
+colnames(cpm) = c("A_virgin_0_5", "A_virgin_1", "A_virgin_2", "A_virgin_3", "A_virgin_4", "A_virgin_5", "A_virgin_6",
+                  "A_virgin_8", "A_virgin_12", "A_virgin_24", "A_mated_0_5", "A_mated_1", "A_mated_2", "A_mated_3", 
+                  "A_mated_4", "A_mated_5", "A_mated_6", "A_mated_8", "A_mated_12", "A_mated_24", "B_virgin_0_5",
+                  "B_virgin_1", "B_virgin_2", "B_virgin_3", "B_virgin_4", "B_virgin_5", "B_virgin_6", "B_virgin_8",
+                  "B_virgin_12", "B_virgin_24", "B_mated_0_5", "B_mated_1", "B_mated_2", "B_mated_3", "B_mated_4", "B_mated_5",
+                  "B_mated_6", "B_mated_8", "B_mated_12", "B_mated_24", "C_virgin_0_5", "C_virgin_1", "C_virgin_2",
+                  "C_virgin_3", "C_virgin_4", "C_virgin_5", "C_virgin_8", "C_virgin_12", "C_virgin_24", "C_mated_0_5",
+                  "C_mated_1", "C_mated_4", "C_mated_5", "C_mated_6", "C_mated_8", "C_mated_12", "C_mated_24")
+
+DEgenes = read.delim("../out/DE_genes_shrunken1.3fold.txt", header = T, as.is = T)
+load("../out/DESeq2_CvsV.RData")
+ids = read.delim("../data/all_ids.txt", header = T, as.is = T)
+case_grep = "mated"
+control_grep = "virgin"
+load("out/signature_matrix_broad.RData")
+
+timepoints = c("0_5", "1", "2", "3", "4", "5", "6", "8", "12", "24")
+```
+
+Loop through time points:
+
+```{r}
+# Note: some genes causes a problem in cwFC evaluation: cw fold changes are all NA. Will remove these gene from DE gene list. 
+DEgenes = DEgenes[,1]
+DEgenes = DEgenes[! DEgenes %in% ids[ids[,1] %in% c("CG8929", "Baldspot", "CG32085"), 2]]
+
+for(i in 7:length(timepoints)){
+  # normalized counts:
+  tp.cpm = cpm[,grep(timepoints[i], colnames(cpm))]
+  
+  # DE genes:
+  tp = as.data.frame(CvsVresults[[1]][[i]])
+  tp = tp[rownames(tp) %in% DEgenes,]
+  tp = tp[tp$padj < 0.05,]
+  tp = as.data.frame(cbind(rownames(tp), tp$padj, tp$log2FoldChange))
+  rownames(tp) = tp[,1]
+  colnames(tp) = c("Symbol", "Padj", "log2FC")
+  tp$`Padj` = as.numeric(tp$`Padj`)
+  tp$log2FC = as.numeric(tp$log2FC)
+  
+  # Change gene ids to symbols:
+  idx = match(rownames(tp), ids[,2])
+  rownames(tp) = ids[idx, 1]
+  tp[,1] = rownames(tp)
+  idx = match(rownames(tp.cpm), ids[,2])
+  rownames(tp.cpm) = ids[idx, 1]
+  tp.cpm = as.matrix(tp.cpm)
+
+  # Calculation of cell-weighted fold changes:
+  
+  outdir = paste("scMappR_out", timepoints[i], sep = "_")
+  
+  toOut <- scMappR_and_pathway_analysis(count_file = tp.cpm, 
+                                      signature_matrix = signature.matrix, 
+                                      DEG_list = tp, 
+                                      case_grep = case_grep,
+                                      control_grep = control_grep, 
+                                      #rda_path = "", 
+                                      max_proportion_change = 10, 
+                                        # Maximum cell-type proportion change – may be useful if there are many rare
+                                        # cell-types. Alternatively, if a cell-type is only present in one condition but not the
+                                        # other, it will prevent possible infinite or 0 cwFold-changes.
+                                      print_plots = TRUE, 
+                                      plot_names = "scMappR", 
+                                      theSpecies = "dmelanogaster", 
+                                      output_directory = outdir,
+                                      sig_matrix_size = nrow(signature.matrix), 
+                                      up_and_downregulated = TRUE, 
+                                      internet = T, 
+                                      toSave = TRUE, 
+                                      path = outdir)
+  
+  # Evaluation of cw fold changes:
+  evaluated <- cwFoldChange_evaluate(cwFC = toOut$cellWeighted_Foldchange$cellWeighted_Foldchange, 
+                                   celltype_prop = toOut$cellWeighted_Foldchanges$cellType_Proportions, 
+                                   DEG_list = tp)
+  #save(toOut, file = paste(paste("cwFC_tp", timepoints[i], sep = "_"), "RData", sep = "."))
+  save(evaluated, file = paste(paste("out/cwFC_evaluated_tp_head_only", timepoints[i], sep = "_"), "RData", sep = "."))
+}
+```
+
+Rank-order of each gene in each celltype:
+
+```{r}
+head(evaluated$cwFoldchange_vs_bulk_rank_change)
+```
+
+Assignment of DEG to celltype:
+
+```{r}
+head(evaluated$cwFoldchange_gene_assigned)
+```
+
+# Assign genes to cell types where possible:
+
+```{r}
+load("out/cwFC_evaluated_tp_head_only_0_5.RData")
+tp05 = evaluated$cwFoldchange_gene_assigned
+load("out/cwFC_evaluated_tp_head_only_1.RData")
+tp1 = evaluated$cwFoldchange_gene_assigned
+load("out/cwFC_evaluated_tp_head_only_2.RData")
+tp2 = evaluated$cwFoldchange_gene_assigned
+load("out/cwFC_evaluated_tp_head_only_3.RData")
+tp3 = evaluated$cwFoldchange_gene_assigned
+load("out/cwFC_evaluated_tp_head_only_4.RData")
+tp4 = evaluated$cwFoldchange_gene_assigned
+load("out/cwFC_evaluated_tp_head_only_5.RData")
+tp5 = evaluated$cwFoldchange_gene_assigned
+load("out/cwFC_evaluated_tp_head_only_6.RData")
+tp6 = evaluated$cwFoldchange_gene_assigned
+load("out/cwFC_evaluated_tp_head_only_8.RData")
+tp8 = evaluated$cwFoldchange_gene_assigned
+load("out/cwFC_evaluated_tp_head_only_12.RData")
+tp12 = evaluated$cwFoldchange_gene_assigned
+load("out/cwFC_evaluated_tp_head_only_24.RData")
+tp24 = evaluated$cwFoldchange_gene_assigned
+
+l = list(tp05, tp1, tp2, tp3, tp4, tp5, tp6, tp8, tp12, tp24)
+
+# make a list where each element contains all the info for a gene.
+all_genes = c()
+for(i in 1:length(l)){
+  all_genes = unique(c(all_genes, unlist(lapply(l[[i]], function(x) names(x)))))
+}
+length(all_genes) # 391 genes
+
+all_genes_res = list()
+for(i in 1:length(all_genes)){
+  gene = all_genes[i]
+  all_res = c()
+  for(j in 1:length(l)){
+    res = lapply(l[[j]], function(x) gene %in% names(x))
+    res = l[[j]][unlist(res)]
+    res = lapply(res, function(x) x[names(x) == gene])
+    res = cbind(names(res), res)
+    all_res = rbind(all_res, res)
+  }
+  all_genes_res[[i]] = all_res
+}
+names(all_genes_res) = all_genes
+
+# Keep for each gene cell type with max specificity (abs value), and set cutoff of 0.5:
+s1 = lapply(all_genes_res, function(x) unlist(x[which.max(abs(as.numeric(x[,2]))),]))
+names(s1) = names(all_genes_res)
+check = lapply(s1, function(x) abs(as.numeric(x[2])) >= 0.5 )
+s2 = s1[unlist(check)]
+length(s2) # 367 genes
+
+celltype = unlist(lapply(s2, function(x) x[1]))
+gene = names(s2)
+df = cbind(gene, celltype)
+l = split(as.data.frame(df), df[,2])
+ngenes = unlist(lapply(l, function(x) nrow(x)))
+ngenes[order(ngenes)]
+#neuron              muscle_cell               unanotated          epithelial_cell                 hemocyte 
+#    7                        9                       14                       18                       19 
+#male_reproductive_system           sensory_neuron               glial_cell                 fat_cell 
+#                      29                       52                       58                      161
+                      
+save(df, file = "out/genes_assigned_to_celltype.RData")
+```
+
