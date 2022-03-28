@@ -1,0 +1,140 @@
+---
+title: "DEXSeq"
+author: "Sofie Delbare"
+date: "May 14, 2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Prepare input data:
+
+```{r}
+library(DEXSeq)
+
+countFiles = list.files("final_filtered_corrected_exon_counts/", pattern=".txt", full.names=TRUE)
+length(countFiles) # 90
+# remove 3 outlier samples:
+countFiles = countFiles[-c(89, 64, 66)]
+
+flattenedFile = list.files(pattern="gff", full.names=TRUE)
+
+sampleTable = read.delim("../../data/design_updated.txt", header = T, as.is = T)
+colnames(sampleTable) = c("condition", "replicate", "timepoint", "sample")
+sampleTable$sample = c(paste("S", seq(1, 10, 1), sep = "_"), paste("V", seq(1, 10, 1), sep = "_"),
+                       paste("C", seq(1, 10, 1), sep = "_"), paste("S", seq(11, 20, 1), sep = "_"),
+                       paste("V", seq(11, 20, 1), sep = "_"), paste("C", seq(11, 20, 1), sep = "_"),
+                       paste("S", seq(21, 30, 1), sep = "_"), paste("V", seq(21, 29, 1), sep = "_"),
+                       paste("C", seq(21, 28, 1), sep = "_"))
+sampleTable = sampleTable[order(rownames(sampleTable)),]
+temp = sapply(countFiles, function(x) strsplit(x, split = "/")[[1]][2])
+temp = sapply(temp, function(x) strsplit(x, split = "\\.")[[1]][1])
+all(rownames(sampleTable) == temp) # T
+sampleTable$each = rownames(sampleTable)
+rownames(sampleTable) = countFiles
+```
+
+# Run DEXSeq, comparing SP+ (C) and V:
+
+```{r}
+all.comparisons.CV = list(c("A_C_0_5", "B_C_0_5", "C_C_0_5", "A_V_0_5", "B_V_0_5", "C_V_0_5"),
+                          c("A_C_1", "B_C_1", "C_C_1", "A_V_1", "B_V_1", "C_V_1"),
+                          c("A_C_2", "B_C_2",  "A_V_2", "B_V_2", "C_V_2"),
+                          c("A_C_3", "B_C_3", "A_V_3", "B_V_3", "C_V_3"),
+                          c("A_C_4", "B_C_4", "C_C_4", "A_V_4", "B_V_4", "C_V_4"),
+                          c("A_C_5", "B_C_5", "C_C_5", "A_V_5", "B_V_5", "C_V_5"),
+                          c("A_C_6", "B_C_6", "C_C_6", "A_V_6", "B_V_6"),
+                          c("A_C_8", "B_C_8", "C_C_8", "A_V_8", "B_V_8", "C_V_8"),
+                          c("A_C_12", "B_C_12", "C_C_12", "A_V_12", "B_V_12", "C_V_12"),
+                          c("A_C_24", "B_C_24", "C_C_24", "A_V_24", "B_V_24", "C_V_24"))
+
+dx_CV_list = list()
+for(i in 1:10){
+  subset = all.comparisons.CV[[i]]
+  idx = which(sampleTable[,5] %in% subset)
+  countFiles.set = countFiles[idx]
+  sampleTable.set = sampleTable[idx,]
+  dxd = DEXSeqDataSetFromHTSeq(countFiles.set, sampleData = sampleTable.set, 
+                               design = ~ sample + exon + condition:exon,
+                               flattenedfile = flattenedFile)
+  dxd = estimateSizeFactors(dxd)
+  dxd = estimateDispersions(dxd)
+  # test full vs. reduced model that does not contain interaction term:
+  dxd = testForDEU(dxd, reducedModel = ~ sample + exon, 
+        fullModel = ~ sample + exon + condition:exon)
+  dxd = estimateExonFoldChanges(dxd, fitExpToVar="condition")
+  dxr = DEXSeqResults(dxd)
+  dx_CV_list[[i]] = dxr
+}
+save(dx_CV_list, file = "out/DEXSeq_output_CV.RData")
+```
+
+# SV:
+
+```{r}
+all.comparisons.SV = list(c("A_S_0_5", "B_S_0_5", "C_S_0_5", "A_V_0_5", "B_V_0_5", "C_V_0_5"),
+                          c("A_S_1", "B_S_1", "C_S_1", "A_V_1", "B_V_1", "C_V_1"),
+                          c("A_S_2", "B_S_2", "C_S_2", "A_V_2", "B_V_2", "C_V_2"),
+                          c("A_S_3", "B_S_3", "C_S_3", "A_V_3", "B_V_3", "C_V_3"),
+                          c("A_S_4", "B_S_4", "C_S_4", "A_V_4", "B_V_4", "C_V_4"),
+                          c("A_S_5", "B_S_5", "C_S_5", "A_V_5", "B_V_5", "C_V_5"),
+                          c("A_S_6", "B_S_6", "C_S_6", "A_V_6", "B_V_6"),
+                          c("A_S_8", "B_S_8", "C_S_8", "A_V_8", "B_V_8", "C_V_8"),
+                          c("A_S_12", "B_S_12", "C_S_12", "A_V_12", "B_V_12", "C_V_12"),
+                          c("A_S_24", "B_S_24", "C_S_24", "A_V_24", "B_V_24", "C_V_24"))
+
+dx_SV_list = list()
+for(i in 1:10){
+  subset = all.comparisons.SV[[i]]
+  idx = which(sampleTable[,5] %in% subset)
+  countFiles.set = countFiles[idx]
+  sampleTable.set = sampleTable[idx,]
+  dxd = DEXSeqDataSetFromHTSeq(countFiles.set, sampleData = sampleTable.set, 
+                               design = ~ sample + exon + condition:exon,
+                               flattenedfile = flattenedFile)
+  dxd = estimateSizeFactors(dxd)
+  dxd = estimateDispersions(dxd)
+  # test full vs. reduced model that does not contain interaction term:
+  dxd = testForDEU(dxd, reducedModel = ~ sample + exon, 
+        fullModel = ~ sample + exon + condition:exon)
+  dxd = estimateExonFoldChanges(dxd, fitExpToVar="condition")
+  dxr = DEXSeqResults(dxd)
+  dx_SV_list[[i]] = dxr
+}
+save(dx_SV_list, file = "out/DEXSeq_output_SV.RData")
+```
+
+# DEXSeq analysis to compare S (SP-) and C (SP+):
+
+```{r}
+all.comparisons.SC = list(c("A_C_0_5", "B_C_0_5", "C_C_0_5", "A_S_0_5", "B_S_0_5", "C_S_0_5"),
+                          c("A_C_1", "B_C_1", "C_C_1", "A_S_1", "B_S_1", "C_S_1"),
+                          c("A_C_2", "B_C_2",  "A_S_2", "B_S_2", "C_S_2"),
+                          c("A_C_3", "B_C_3",  "A_S_3", "B_S_3", "C_S_3"),
+                          c("A_C_4", "B_C_4", "C_C_4", "A_S_4", "B_S_4", "C_S_4"),
+                          c("A_C_5", "B_C_5", "C_C_5", "A_S_5", "B_S_5", "C_S_5"),
+                          c("A_C_6", "B_C_6", "C_C_6", "A_S_6", "B_S_6", "C_S_6"),
+                          c("A_C_8", "B_C_8", "C_C_8", "A_S_8", "B_S_8", "C_S_8"),
+                          c("A_C_12", "B_C_12", "C_C_12", "A_S_12", "B_S_12", "C_S_12"),
+                          c("A_C_24", "B_C_24", "C_C_24", "A_S_24", "B_S_24", "C_S_24"))
+
+dx_SC_list = list()
+for(i in 1:10){
+  subset = all.comparisons.SC[[i]]
+  idx = which(sampleTable[,5] %in% subset)
+  countFiles.set = countFiles[idx]
+  sampleTable.set = sampleTable[idx,]
+  dxd = DEXSeqDataSetFromHTSeq(countFiles.set, sampleData = sampleTable.set, 
+                               design = ~ sample + exon + condition:exon,
+                               flattenedfile = flattenedFile)
+  dxd = estimateSizeFactors(dxd)
+  dxd = estimateDispersions(dxd)
+  # test full vs. reduced model that does not contain interaction term:
+  dxd = testForDEU(dxd, reducedModel = ~ sample + exon, 
+        fullModel = ~ sample + exon + condition:exon)
+  dxd = estimateExonFoldChanges(dxd, fitExpToVar="condition")
+  dxr = DEXSeqResults(dxd)
+  dx_SC_list[[i]] = dxr
+}
+save(dx_SC_list, file = "out/DEXSeq_output_SC.RData")
+```

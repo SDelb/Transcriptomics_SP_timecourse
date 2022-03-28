@@ -1,0 +1,436 @@
+---
+title: "Exon count filtering"
+author: "Sofie Delbare"
+date: "April 6, 2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Add all counts files into one data frame:
+
+```{r}
+setwd("exon_counts/")
+filelist = list.files(pattern = ".*.txt")
+datalist = lapply(filelist, function(x) read.table(x, header=F, as.is=T, row.names = 1)) 
+datafr = do.call("cbind", datalist) 
+
+dfnames = sapply(filelist, function(x) strsplit(x, split="_"))
+
+all.names = c()
+for(i in 1:length(dfnames)){
+  x = unlist(dfnames[[i]])
+  if(length(x) == 9){
+    new.name = paste(x[5:7], collapse = "_")
+  }
+  if(length(x) == 10){
+    new.name = paste(x[5:8], collapse="_")
+  }
+  all.names = c(all.names, new.name)
+}
+colnames(datafr) <-  all.names
+
+datafr[(nrow(datafr)-8):nrow(datafr),1:3]
+# remove the last 5 rows:
+datafr = datafr[-((nrow(datafr)-4):nrow(datafr)),]
+datafr[(nrow(datafr)-4):nrow(datafr),1:3]
+```
+
+# Remove exons that belong to genes that did not survive filtering in the regular DE analysis and remove exons that belong to more than one gene: 
+
+```{r}
+setwd("..")
+filtered = read.delim("../data/cpm_updated.txt", header = T, as.is = T)
+filtered = rownames(filtered) # 9027
+
+keep = c()
+for(i in 1:nrow(datafr)){
+  n = rownames(datafr)[i]
+  n = strsplit(n, split = ":")[[1]][1]
+  if(length(strsplit(n, split = "\\+")[[1]]) == 1){
+    check = n %in% filtered
+    keep = c(keep, check)
+  }
+  if(length(strsplit(n, split = "\\+")[[1]]) > 1){
+    keep = c(keep, FALSE)}
+}
+sum(keep) # 57,322
+datafr = datafr[keep,]
+dim(datafr) # 57,322 exons
+
+# names of genes in dataset:
+gene.names = sapply(rownames(datafr), function(x) strsplit(x, split = ":")[[1]][1])  
+gene.names = unique(gene.names) # 8,375
+```
+
+# Additional filtering:
+
+Soneson et al. (2016, Genome Biology)
+
+Exclude exons with low normalized counts. 
+Correct normalized exon counts for both length of the exon bin and length of the gene, and number of isoforms the exon bin belongs to, and number of isoforms per gene. 
+filter = max(k) of (Cik / (NiLi)) / sum(across all exon bins in gene (Cik / (NjLj)) )
+
+max(k) = take the max across all samples
+Cik = normalized counts of exon bin i in sample k
+Ni = number of isoforms exon bin i is part of
+Li = length of exon bin i
+Nj = number of isoforms in gene
+Lj = length of gene
+
+Start from gff to extract info:
+
+- gene(s) the exon belongs to                         OK - this is 1 in my case - I removed overlapping exons
+- tx the exon belongs to                              OK
+- exon length                                         OK
+- gene length                                         OK
+- number of tx per gene                               OK
+
+```{r}
+gff = read.delim("Drosophila_melanogaster.BDGP6.32.103.gff", header = F, as.is = T)
+
+# add extra column, with gene:exonNumber
+gene_id = apply(gff, 1, function(x) strsplit(strsplit(as.character(x[9]), split = ";")[[1]][1], 
+                                             split = " ")[[1]][2])
+exon_id = apply(gff, 1, function(x) strsplit(strsplit(as.character(x[9]), split = ";")[[1]][3], 
+                                            split = " ")[[1]][3])
+gff = cbind(gff, gene_id, exon_id, paste(gene_id, exon_id, sep = ":"))
+
+# Keep only the rows whose gene_id is in gene.names:
+gff = gff[gff$gene_id %in% gene.names, ]
+
+# rows with "aggregate gene" have info regarding gene start and end:
+gene_start = gff[gff[,3] == "aggregate_gene", 4]
+gene_end = gff[gff[,3] == "aggregate_gene", 5]
+gene_length = gene_end - gene_start
+gene_name = gff[gff[,3] == "aggregate_gene", 10]
+names(gene_length) = gene_name
+min(gene_length) # 213
+
+# Number of tx per gene: 
+# I will split gff by gene for this
+gff.list = split(gff, gff[,10])
+# remove line with "aggregate_gene" (first line)
+gff.list = lapply(gff.list, function(x) x[-1,])
+# retrieve tx, split by "+" and obtain unique number of tx:
+tx_per_gene = c()
+for(i in 1:length(gff.list)){
+  x = gff.list[[i]]
+  tx = unique(unlist(sapply(x[,9], function(y) strsplit(strsplit(strsplit(as.character(y), 
+                                                                          split = ";")[[1]][2], 
+                                        split = " ")[[1]][3], split = "\\+"))))
+  tx_per_gene = c(tx_per_gene, length(tx))
+}
+names(tx_per_gene) = names(gff.list)
+
+# Exon length:
+# keep rows with "exonic_part"
+exon_start = gff[gff[,3] == "exonic_part", 4]
+exon_end = gff[gff[,3] == "exonic_part", 5]
+exon_length = exon_end - exon_start
+exon_name = gff[gff[,3] == "exonic_part", 12]
+names(exon_length) = exon_name
+min(exon_length)  # 0
+# There are exons with length 0 - that doesn't seem right. 
+# Looks like these are cases where exon in one or more tx is just one base longer than in the other. 
+# I will give these length 1.
+exon_length[exon_length == 0] = 1
+min(exon_length)
+
+# Number of tx the exon belongs to:
+exon_info = gff[gff[,3] == "exonic_part", ]
+tx_per_exon = c()
+for(i in 1:nrow(exon_info)){
+  e = exon_info[i,]
+  tx = unique(unlist(sapply(e[,9], function(y) strsplit(strsplit(strsplit(as.character(y), 
+                                                                          split = ";")[[1]][2], 
+                                        split = " ")[[1]][3], split = "\\+"))))
+  tx_per_exon = c(tx_per_exon, length(tx))
+}
+names(tx_per_exon) = exon_info[,12]
+
+# Combine all information in one dataframe with one row per exon:
+all(names(tx_per_exon) == names(exon_length)) # TRUE
+df = cbind(tx_per_exon, exon_length)
+gene_id = sapply(rownames(df), function(x) strsplit(x, split = ":")[[1]][1])
+df = cbind(df, gene_id)
+idx = match(df[,3], names(gene_length))
+gene_length = gene_length[idx]
+df = cbind(df, gene_length)
+
+idx = match(df[,3], names(tx_per_gene))
+tx_per_gene = tx_per_gene[idx]
+df = cbind(df, tx_per_gene)
+
+save(df, file = "exon_info.RData")
+```
+
+For the actual filtering, Soneson et al. use DEXSeq::featureCounts() with normalized = T to import and normalize count data. Then they calculate this: 
+
+filter = max(k) of (Cik / (NiLi)) / sum(across all exon bins in gene (Cik / (NjLj)) )
+
+max(k) = take the max across all samples
+Cik = normalized counts of exon bin i in sample k
+Ni = number of isoforms exon bin i is part of
+Li = length of exon bin i
+Nj = number of isoforms in gene
+Lj = length of gene
+
+From the manual, it looks like DEXSeq::featureCounts() takes a dxd object. So, we'll make that first to obtain normalization factors, then filter using the normalized counts, and then re-fit the raw filtered data for the actual analysis. 
+
+```{r}
+library(DEXSeq)
+flattenedFile = list.files(pattern="gff", full.names=TRUE)
+countFiles = list.files("exon_counts/", pattern=".txt", full.names=TRUE)
+countFiles = countFiles[-c(77, 83, 84)]
+sampleTable = read.delim("../../data/design_updated.txt", header = T, as.is = T)
+rownames(sampleTable) = countFiles
+colnames(sampleTable) = c("condition", "replicate", "timepoint", "sample")
+sampleTable$sample = c(paste("S", seq(1, 10, 1), sep = "_"), paste("V", seq(1, 10, 1), sep = "_"),
+                       paste("C", seq(1, 10, 1), sep = "_"), paste("S", seq(11, 20, 1), sep = "_"),
+                       paste("V", seq(11, 20, 1), sep = "_"), paste("C", seq(11, 20, 1), sep = "_"),
+                       paste("S", seq(21, 30, 1), sep = "_"), paste("V", seq(21, 29, 1), sep = "_"),
+                       paste("C", seq(21, 28, 1), sep = "_"))
+load("exon_info.RData") # df
+
+# for each time point:
+idx.list = list(which(sampleTable$timepoint == 0.5), which(sampleTable$timepoint == 1),
+                which(sampleTable$timepoint == 2), which(sampleTable$timepoint == 3),
+                which(sampleTable$timepoint == 4), which(sampleTable$timepoint == 5),
+                which(sampleTable$timepoint == 6), which(sampleTable$timepoint == 8),
+                which(sampleTable$timepoint == 12), which(sampleTable$timepoint == 24))
+
+norm_counts = list()
+for(k in 1:length(idx.list)){
+  idx = idx.list[[k]]
+  countFiles.sub = countFiles[idx]
+  sampleTable.sub = sampleTable[idx,]
+  dxd = DEXSeqDataSetFromHTSeq(countFiles.sub, sampleData = sampleTable.sub, 
+                               design = ~ sample + exon + condition:exon, flattenedfile=flattenedFile)
+  dxd = estimateSizeFactors(dxd)
+  dxd = estimateDispersions(dxd)
+  n = DEXSeq::featureCounts(dxd, normalized = T) # T = will divide counts by normalization factors
+  norm_counts[[k]] = n
+}
+save(norm_counts, file = "norm_counts_unfiltered.RData")
+```
+
+Now filter the normalized counts:
+
+```{r}
+load("norm_counts_unfiltered.RData")
+load("exon_info.RData")
+
+# rownames in normalized counts files have "E" in front of 001 etc.
+E_id = sapply(rownames(df), function(x) strsplit(x, split = ":")[[1]][2])
+E_id = paste(paste(df[,3], "E", sep = ":"), E_id, sep ="")
+df = cbind(df, E_id)
+# Multiply exon length and tx per exon:
+NiLi = apply(df, 1, function(x) as.numeric(x[1])*as.numeric(x[2]))
+# Multiply gene lenth and tx per gene:
+NjLj = apply(df, 1, function(x) as.numeric(x[4]) * as.numeric(x[5]))
+df = as.data.frame(cbind(df, NiLi, NjLj))
+
+keep_exon_list = list()
+keep_exons_list_10q = list()
+keep_exons_list_25q = list()
+for(k in 1:length(norm_counts)){
+  n = norm_counts[[k]]
+  # keep only exons in df:
+  n = n[rownames(n) %in% df[,6],]
+  #all(df[,6] %in% rownames(test)) # T
+  # align exon orders:
+  df = df[order(df[,6]),]
+  n = n[order(rownames(n)),]
+  #all(rownames(n) == df[,6]) # T
+  
+  # Divide every count in n by NiLi (A)
+  norm_exon_count = c()
+  for(i in 1:nrow(n)){
+    r = n[i,]
+    nili = as.numeric(df[i,7])
+    norm_exon_count = rbind(norm_exon_count, r/nili)
+  }
+  rownames(norm_exon_count) = rownames(n)
+  # Divide every count in test by NjLj
+  norm_gene_count = c()
+  for(i in 1:nrow(n)){
+    r = n[i,]
+    njlj = as.numeric(df[i,8])
+    norm_gene_count = rbind(norm_gene_count, r/njlj)
+  }
+  rownames(norm_gene_count) = rownames(n)
+  
+  # Sum the resulting norm_gene_count across all exons for each gene, within each sample.
+  norm_gene_count_list = split(as.data.frame(norm_gene_count), df[,3]) 
+  sum_norm_gene_count = list()
+  for(i in 1:length(norm_gene_count_list)){
+    x = norm_gene_count_list[[i]]
+    sum_by_sample = apply(x, 2, function(y) sum(y))
+    sum_norm_gene_count[[i]] = sum_by_sample
+  }
+  names(sum_norm_gene_count) = names(norm_gene_count_list)
+  
+  # Divide (A) by this sum (by sample): 
+  f = c()
+  for(i in 1:nrow(norm_exon_count)){
+    r = norm_exon_count[i,]
+    gene = df[i,3]
+    divBy = unlist(sum_norm_gene_count[names(sum_norm_gene_count) == gene])
+    f = rbind(f, r /divBy)
+  }
+  #sum(is.na(f)) # 145
+  #check = apply(f, 1, function(x) any(is.na(x)))
+  #sum(check) # 40 rows with NA
+  #idx = which(check)
+  #f[idx[1],]
+  rownames(f) = rownames(n)
+  #rownames(f)[idx[1]] # "FBgn0000276:E001"
+  #norm_exon_count[rownames(norm_exon_count) == "FBgn0000276:E001",]
+  #norm_gene_count[rownames(norm_gene_count) == "FBgn0000276:E001",]
+  # NA values are caused by 0 reads
+  f[is.na(f)] = 0
+  
+  # Filter:
+  # Take the maximum result across each row (exon id, across all samples)
+  exonmax = apply(f, 1, function(x) max(x))
+  # remove exons whose max are in the lowest 20%:
+  q = quantile(exonmax, 0.2) 
+  keepidx = which(exonmax > q )
+  keep_exons = rownames(n[keepidx,])
+  keep_exon_list[[k]] = keep_exons
+  
+  # remove exons whose max are in the lowest 10%:
+  q = quantile(exonmax, 0.1) 
+  keepidx = which(exonmax > q )
+  keep_exons = rownames(n[keepidx,])
+  keep_exons_list_10q[[k]] = keep_exons
+  
+  # remove exons whose max are in the lowest 25%:
+  q = quantile(exonmax, 0.25) 
+  keepidx = which(exonmax > q )
+  keep_exons = rownames(n[keepidx,])
+  keep_exons_list_25q[[k]] = keep_exons
+}
+
+# In paper they tried to remove lowest 5%, 10%, 15% or 25%. All improved FDR control.
+  
+length(unique(unlist(keep_exon_list))) # 48,822 exons
+length(unique(df[df[,6] %in% unlist(keep_exon_list),3])) # 7671 genes
+keep_exon_list = rownames(df[df[,6] %in% unlist(keep_exon_list),])
+save(keep_exon_list, file = "keep_exons.RData")
+```
+
+# Filter the raw exon counts and save to folder:
+
+```{r}
+dim(datafr)  
+filtered.datafr = datafr[rownames(datafr) %in% keep_exon_list, ]
+dim(filtered.datafr) # 48,822 x 90
+
+setwd("filtered_exon_counts/")
+for(i in 1:ncol(filtered.datafr)){
+  x = filtered.datafr[,i]
+  names(x) = rownames(filtered.datafr)
+  write.table(x, file = paste(colnames(filtered.datafr)[i], "txt", sep = "."), row.names = T,
+              col.names = F, quote = F, sep = "\t")
+}
+setwd("..")
+```
+
+# Run Combat seq on the raw filtered exon counts:
+
+```{r}
+library(sva)
+immuneC = read.delim("../../data/immune_clusters.txt", header = T, as.is = T)
+design = read.delim("../../data/design.txt")
+all(rownames(design) == colnames(filtered.datafr)) # F
+rownames(design)
+colnames(filtered.datafr)
+colnames(filtered.datafr) = rownames(design)
+
+dat.corrected = ComBat_seq(counts = as.matrix(filtered.datafr),
+                           batch = factor(immuneC[,1]), group = design$Sample, full_mod = T)
+
+setwd("filtered_corrected_exon_counts/")
+for(i in 1:ncol(dat.corrected)){
+  x = dat.corrected[,i]
+  names(x) = rownames(dat.corrected)
+  write.table(x, file = paste(colnames(dat.corrected)[i], "txt", sep = "."), row.names = T, 
+              col.names = F, quote = F, sep = "\t")
+}
+setwd("..")
+```
+
+# Final filtering step: Keep only exons that are not present in all tx of the gene.
+
+```{r}
+setwd("filtered_corrected_exon_counts/")
+filelist = list.files(pattern = ".*.txt")
+datalist = lapply(filelist, function(x) read.table(x, header=F, as.is=T, row.names = 1)) 
+filtered.datafr = do.call("cbind", datalist) 
+colnames(filtered.datafr) = filelist
+setwd("..")
+exons = rownames(filtered.datafr) # 48,822 exons
+genes = unique(unlist(sapply(exons, function(x) strsplit(x, split = ":")[[1]][1]))) # 7,671 genes
+
+gff = read.delim("Drosophila_melanogaster.BDGP6.32.103.gff", header = F, as.is = T)
+gene_id = apply(gff, 1, function(x) strsplit(strsplit(as.character(x[9]), split = ";")[[1]][1], 
+                                             split = " ")[[1]][2])
+exon_id = apply(gff, 1, function(x) strsplit(strsplit(as.character(x[9]), split = ";")[[1]][3], 
+                                            split = " ")[[1]][3])
+gff = cbind(gff, gene_id, exon_id, paste(gene_id, exon_id, sep = ":"))
+
+# Number of tx per gene:
+gene.list = split(gff, gff$gene_id)
+gene.list = gene.list[names(gene.list) %in% genes]
+gene.list = lapply(gene.list, function(x) x[-1,])
+tx_per_gene = c()
+for(i in 1:length(gene.list)){
+  x = gene.list[[i]]
+  tx = unique(unlist(sapply(x[,9], function(y) strsplit(strsplit(strsplit(as.character(y), 
+                                                                          split = ";")[[1]][2], 
+                                        split = " ")[[1]][3], split = "\\+"))))
+  tx_per_gene = c(tx_per_gene, length(tx))
+}
+names(tx_per_gene) = names(gene.list)
+table(tx_per_gene) # 2,605 genes have only one tx. 
+
+# Number of tx per exon:
+gff.exons = gff[gff[,12] %in% exons,]
+tx_per_exon = c()
+for(i in 1:nrow(gff.exons)){
+  x = gff.exons[i,9]
+  tx = unlist(strsplit(strsplit(strsplit(as.character(x), split = ";")[[1]][2],split = " ")[[1]][3], 
+                       split = "\\+"))
+  tx_per_exon = c(tx_per_exon, length(tx))
+}
+names(tx_per_exon) = gff.exons[,12]
+
+# Keep only exons where tx_per_exon < tx_per_gene:
+df = cbind(names(tx_per_exon), tx_per_exon)
+colnames(df) = c("exon", "tx_per_exon")
+g = unlist(sapply(df[,1], function(x) strsplit(x, split = ":")[[1]][1]))
+df = cbind(df, g)
+colnames(df) = c(colnames(df)[-3], "gene")
+idx = match(df[,3], names(tx_per_gene))
+t = tx_per_gene[idx]
+df = cbind(df, t)
+colnames(df) = c(colnames(df)[-4], "tx_per_gene")
+check = apply(df, 1, function(x) x[2] != x[4])
+keep.exons = df[check,]
+nrow(keep.exons) # 15,011 exons
+length(unique(keep.exons[,3])) # 4,143 genes
+
+# Save filtered counts:
+filtered.datafr = filtered.datafr[rownames(filtered.datafr) %in% keep.exons[,1], ]
+dim(filtered.datafr) # 16,011  x  90
+
+setwd("final_filtered_corrected_exon_counts/")
+for(i in 1:ncol(filtered.datafr)){
+  x = filtered.datafr[,i]
+  names(x) = rownames(filtered.datafr)
+  write.table(x, file = paste(colnames(filtered.datafr)[i], "txt", sep = "."), row.names = T, 
+              col.names = F, quote = F, sep = "\t")
+}
+```

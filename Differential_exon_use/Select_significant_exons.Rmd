@@ -1,0 +1,107 @@
+---
+title: "Select significant exons"
+author: "Sofie Delbare"
+date: "May 19, 2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# First pass selection for SC:
+
+```{r}
+load("out/DEXSeq_output_SC.RData")
+
+# 1. Select exons based on adjusted pvalues for exons
+DE_exons = list()
+for(i in 1:10){
+  x = as.data.frame(dx_SC_list[[i]])
+  x$padj[is.na(x$padj)] = 1
+  DE_exons[[i]] = x[x$padj < 0.05,]
+}
+
+# 2. Select genes based on perGeneQValue()
+genes = lapply(dx_SC_list, function(x) perGeneQValue(x))
+genes = lapply(genes, function(x) names(x[x< 0.05]))
+genes = unique(unlist(genes)) # 437 genes
+
+# 3. Intersect 1 and 2
+keep = lapply(DE_exons, function(x) x[x[,1] %in% genes,])
+unlist(lapply(keep, function(x) nrow(x))) #  0   0  23   4   0  28 324   5 361 115
+
+# 4. Select final exons and genes based on at least one 1.5 fold change for significant exon
+DE_exons_large = list()
+for(i in 1:10){
+  x = keep[[i]]
+  x = na.omit(x)
+  DE_exons_large[[i]] = x[abs(x$log2fold_S_C) >= log2(1.5),]
+}
+save(DE_exons_large, file = "out/DE_exons_large_SC.RData")
+```
+
+
+# First pass selection for CV:
+
+```{r}
+load("out/DEXSeq_output_CV.RData")
+
+# 1. Select exons based on adjusted pvalues for exons
+DE_exons = list()
+for(i in 1:10){
+  x = as.data.frame(dx_CV_list[[i]])
+  x$padj[is.na(x$padj)] = 1
+  DE_exons[[i]] = x[x$padj < 0.05,]
+}
+
+# 2. Select genes based on perGeneQValue()
+genes = lapply(dx_CV_list, function(x) perGeneQValue(x))
+genes = lapply(genes, function(x) names(x[x< 0.05]))
+genes = unique(unlist(genes)) # 248 genes
+
+# 3. Intersect 1 and 2
+keep = lapply(DE_exons, function(x) x[x[,1] %in% genes,])
+unlist(lapply(keep, function(x) nrow(x))) #  3   8  18   5  66  32 100   4  51 147
+
+# 4. Select final exons and genes based on at least one 1.5 fold change for significant exon
+DE_exons_large = list()
+for(i in 1:10){
+  x = keep[[i]]
+  x = na.omit(x)
+  DE_exons_large[[i]] = x[abs(x$log2fold_V_C) >= log2(1.5),]
+}
+save(DE_exons_large, file = "out/DE_exons_large_CV.RData")
+```
+
+# First pass selection for SV:
+
+```{r}
+load("out/DEXSeq_output_SV.RData")
+
+# 1. Select exons based on adjusted pvalues for exons
+DE_exons = list()
+for(i in 1:10){
+  x = as.data.frame(dx_SV_list[[i]])
+  x$padj[is.na(x$padj)] = 1
+  DE_exons[[i]] = x[x$padj < 0.05,]
+}
+
+# 2. Select genes based on perGeneQValue()
+genes = lapply(dx_SV_list, function(x) perGeneQValue(x))
+genes = lapply(genes, function(x) names(x[x< 0.05]))
+genes = unique(unlist(genes)) # 153 genes
+
+# 3. Intersect 1 and 2
+keep = lapply(DE_exons, function(x) x[x[,1] %in% genes,])
+unlist(lapply(keep, function(x) nrow(x))) #  111   4   6   2   6  18   2   0   0  75
+
+# 4. Select final exons and genes based on at least one 1.5 fold change for significant exon
+DE_exons_large = list()
+for(i in 1:10){
+  x = keep[[i]]
+  x = na.omit(x)
+  DE_exons_large[[i]] = x[abs(x$log2fold_V_S) >= log2(1.5),]
+}
+save(DE_exons_large, file = "out/DE_exons_large_SV.RData")
+```
+
+

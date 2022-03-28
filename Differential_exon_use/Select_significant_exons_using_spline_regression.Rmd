@@ -1,0 +1,240 @@
+---
+title: "Select exons using spline regression"
+author: "Sofie Delbare"
+date: "May 19, 2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Selection method:
+
+Fit spline across data points (variance stabilized normalized counts) for each treatment. 
+Select exons if the adj R2 for the spline fit is at least 0.6 in at least one of the treatments. 
+Splines are fit using a knot at every single time point. 
+This extra selection step is used to remove exons with high inter-replicate variability at many time points (could be selected by DEXseq because DEXSeq was run on one time point at a time).
+
+```{r}
+load("out/DE_exons_large_CV.RData")
+CV = DE_exons_large
+CV = unique(unlist(lapply(CV, function(x) rownames(x))))
+load("out/DE_exons_large_SC.RData")
+SC = DE_exons_large
+SC = unique(unlist(lapply(SC, function(x) rownames(x))))
+load("out/DE_exons_large_SV.RData")
+SV = DE_exons_large
+SV = unique(unlist(lapply(SV, function(x) rownames(x))))
+
+all_exons = unique(c(CV, SC, SV)) # 274 exons
+
+library(splines)
+
+load("out/DEXSeq_output_CV.RData")
+load("out/DEXSeq_output_SC.RData")
+load("out/DEXSeq_output_SV.RData")
+```
+
+# CV spline regression:
+
+```{r}
+R2_V = c()
+R2_C = c()
+for(j in 1:length(all_exons)){
+  ex = all_exons[j]
+  gene = dx_CV_list[[1]]
+  gene = gene[rownames(gene) == ex, 1]
+
+  A_C = c(); B_C = c(); C_C = c()
+  A_V = c(); B_V = c(); C_V = c()
+  for(i in 1:10){
+    o = dx_CV_list[[i]]
+    rt <- which(o$groupID == gene)
+   sampleData <- o@sampleData
+    count <- t( t(o$countData[rt,])/sampleData$sizeFactor)
+    count = DEXSeq:::vst(count, o)
+    count = count[rownames(count) == ex,]
+    A_C = c(A_C, count[grep("A_C", names(count))])
+    B_C = c(B_C, count[grep("B_C", names(count))])
+    C_C = c(C_C, count[grep("C_C", names(count))])
+    A_V = c(A_V, count[grep("A_V", names(count))])
+    B_V = c(B_V, count[grep("B_V", names(count))])
+    C_V = c(C_V, count[grep("C_V", names(count))])
+  }
+  counts = c(A_C, B_C, C_C, A_V, B_V, C_V)
+  treatment = c(rep(colnames(dx_CV_list[[1]])[8], 28), rep(colnames(dx_CV_list[[1]])[9], 29))
+  time = c(rep(c(0.5, 1, 2, 3, 4, 5, 6, 8, 12, 24), 2), c(0.5, 1, 4, 5, 6, 8, 12, 24),
+           rep(c(0.5, 1, 2, 3, 4, 5, 6, 8, 12, 24), 2), c(0.5, 1, 2, 3, 4, 5, 8, 12, 24))
+  timepoint =  c(rep(c("t0.5", "t1", "t2", "t3", "t4", "t5", "t6", "t8", "t12",  "t24"), 2),
+                     c("t0.5", "t1", "t4", "t5", "t6", "t8", "t12",  "t24"),
+                     rep(c("t0.5", "t1", "t2", "t3", "t4", "t5", "t6", "t8", "t12",  "t24"), 2),
+                     c("t0.5", "t1", "t2", "t3", "t4", "t5", "t8", "t12",  "t24"))
+  breaks = c(rep(seq(1, 10, 1), 2), c(1, 2, 5, 6, 7, 8, 9, 10), rep(seq(1, 10, 1), 2),
+                 c(1, 2, 3, 4, 5, 6, 8, 9, 10))
+  
+  dat = as.data.frame(cbind(counts, treatment, time, timepoint, breaks))
+  dat[,1] = as.numeric(dat[,1])
+  dat[,2] = as.factor(dat[,2])
+  dat[,3] = as.numeric(dat[,3])
+
+  model_V = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "V",])
+  if(bptest(model_V)$p.value < 0.05){ # < 0.05 means evidence of heteroscedasticity among residuals
+      wt <- 1 / lm(abs(model_V$residuals) ~ model_V$fitted.values)$fitted.values^2
+      model_V = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "V",],
+               weights = wt)
+      R2_V = c(R2_V, summary(model_V)$adj.r.squared)}
+  else{R2_V = c(R2_V, summary(model_V)$adj.r.squared)}
+  
+  model_C = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "C",])
+  if(bptest(model_C)$p.value < 0.05){ # < 0.05 means evidence of heteroscedasticity among residuals
+      wt <- 1 / lm(abs(model_C$residuals) ~ model_C$fitted.values)$fitted.values^2
+      model_C = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "C",],
+               weights = wt)
+      R2_C = c(R2_C, summary(model_C)$adj.r.squared)}
+  else{R2_C = c(R2_C, summary(model_C)$adj.r.squared)}
+}
+
+dfCV = cbind(R2_C, R2_V)
+rownames(dfCV) = all_exons
+colnames(dfCV) = c("R2_C", "R2_V")
+```
+
+# SC spline regression:
+
+```{r}
+R2_S = c()
+R2_C = c()
+for(j in 1:length(all_exons)){
+  ex = all_exons[j]
+  gene = dx_SC_list[[1]]
+  gene = gene[rownames(gene) == ex, 1]
+
+  A_C = c(); B_C = c(); C_C = c()
+  A_S = c(); B_S = c(); C_S = c()
+  for(i in 1:10){
+    o = dx_SC_list[[i]]
+    rt <- which(o$groupID == gene)
+   sampleData <- o@sampleData
+    count <- t( t(o$countData[rt,])/sampleData$sizeFactor)
+    count = DEXSeq:::vst(count, o)
+    count = count[rownames(count) == ex,]
+    A_C = c(A_C, count[grep("A_C", names(count))])
+    B_C = c(B_C, count[grep("B_C", names(count))])
+    C_C = c(C_C, count[grep("C_C", names(count))])
+    A_S = c(A_S, count[grep("A_S", names(count))])
+    B_S = c(B_S, count[grep("B_S", names(count))])
+    C_S = c(C_S, count[grep("C_S", names(count))])
+  }
+  counts = c(A_C, B_C, C_C, A_S, B_S, C_S)
+  treatment = c(rep(colnames(dx_SC_list[[1]])[8], 28), rep(colnames(dx_SC_list[[1]])[9], 30))
+  time = c(rep(c(0.5, 1, 2, 3, 4, 5, 6, 8, 12, 24), 2), c(0.5, 1, 4, 5, 6, 8, 12, 24),
+           rep(c(0.5, 1, 2, 3, 4, 5, 6, 8, 12, 24), 3))
+  timepoint =  c(rep(c("t0.5", "t1", "t2", "t3", "t4", "t5", "t6", "t8", "t12", "t24"), 2),
+                     c("t0.5", "t1", "t4", "t5", "t6", "t8", "t12", "t24"),
+                     rep(c("t0.5", "t1", "t2", "t3", "t4", "t5", "t6", "t8", "t12", "t24"), 3))
+  breaks = c(rep(seq(1, 10, 1), 2), c(1, 2, 5, 6, 7, 8, 9, 10), rep(seq(1, 10, 1), 3))
+  dat = as.data.frame(cbind(counts, treatment, time, timepoint, breaks))
+  dat[,1] = as.numeric(dat[,1])
+  dat[,2] = as.factor(dat[,2])
+  dat[,3] = as.numeric(dat[,3])
+  
+  model_S = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "S",])
+  #plot(fitted(model_S), resid(model_S), xlab='Fitted Values', ylab='Residuals')
+  if(bptest(model_S)$p.value < 0.05){ # < 0.05 means evidence of heteroscedasticity among residuals
+      wt <- 1 / lm(abs(model_S$residuals) ~ model_S$fitted.values)$fitted.values^2
+      model_S = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "S",],
+               weights = wt)
+      R2_S = c(R2_S, summary(model_S)$adj.r.squared)}
+  else{R2_S = c(R2_S, summary(model_S)$adj.r.squared)}
+  
+  model_C = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "C",])
+  if(bptest(model_C)$p.value < 0.05){ # < 0.05 means evidence of heteroscedasticity among residuals
+      wt <- 1 / lm(abs(model_C$residuals) ~ model_C$fitted.values)$fitted.values^2
+      model_C = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "C",],
+               weights = wt)
+      R2_C = c(R2_C, summary(model_C)$adj.r.squared)}
+  else{R2_C = c(R2_C, summary(model_C)$adj.r.squared)}
+  
+  }
+dfSC = cbind(R2_S, R2_C)
+rownames(dfSC) = all_exons
+colnames(dfSC) = c("R2_S", "R2_C")
+```
+
+# SV:
+
+```{r}
+R2_V = c()
+R2_S = c()
+for(j in 1:length(all_exons)){
+  ex = all_exons[j]
+  gene = dx_SV_list[[1]]
+  gene = gene[rownames(gene) == ex, 1]
+
+  A_V = c(); B_V = c(); C_V = c()
+  A_S = c(); B_S = c(); C_S = c()
+  for(i in 1:10){
+    o = dx_SV_list[[i]]
+    rt <- which(o$groupID == gene)
+   sampleData <- o@sampleData
+    count <- t( t(o$countData[rt,])/sampleData$sizeFactor)
+    count = DEXSeq:::vst(count, o)
+    count = count[rownames(count) == ex,]
+    A_V = c(A_V, count[grep("A_V", names(count))])
+    B_V = c(B_V, count[grep("B_V", names(count))])
+    C_V = c(C_V, count[grep("C_V", names(count))])
+    A_S = c(A_S, count[grep("A_S", names(count))])
+    B_S = c(B_S, count[grep("B_S", names(count))])
+    C_S = c(C_S, count[grep("C_S", names(count))])
+  }
+  counts = c(A_V, B_V, C_V, A_S, B_S, C_S)
+  treatment = c(rep(colnames(dx_SV_list[[1]])[9], 29), rep(colnames(dx_SV_list[[1]])[8], 30))
+  time = c(rep(c(0.5, 1, 2, 3, 4, 5, 6, 8, 12, 24), 2), c(0.5, 1, 2, 3, 4, 5, 8, 12, 24),
+           rep(c(0.5, 1, 2, 3, 4, 5, 6, 8, 12, 24), 3))
+  timepoint =  c(rep(c("t0.5", "t1", "t2", "t3", "t4", "t5", "t6", "t8", "t12", "t24"), 2),
+                     c("t0.5", "t1", "t2", "t3", "t4", "t5",  "t8", "t12", "t24"),
+                     rep(c("t0.5", "t1", "t2", "t3", "t4", "t5", "t6", "t8", "t12", "t24"), 3))
+  breaks = c(rep(seq(1, 10, 1), 2), c(1, 2, 3, 4, 5, 7, 8, 9, 10), rep(seq(1, 10, 1), 3))
+  dat = as.data.frame(cbind(counts, treatment, time, timepoint, breaks))
+  dat[,1] = as.numeric(dat[,1])
+  dat[,2] = as.factor(dat[,2])
+  dat[,3] = as.numeric(dat[,3])
+  
+  model_S = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "S",])
+  #plot(fitted(model_S), resid(model_S), xlab='Fitted Values', ylab='Residuals')
+  if(bptest(model_S)$p.value < 0.05){ # < 0.05 means evidence of heteroscedasticity among residuals
+      wt <- 1 / lm(abs(model_S$residuals) ~ model_S$fitted.values)$fitted.values^2
+      model_S = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "S",],
+               weights = wt)
+      R2_S = c(R2_S, summary(model_S)$adj.r.squared)}
+  else{R2_S = c(R2_S, summary(model_S)$adj.r.squared)}
+  
+  model_V = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "V",])
+  if(bptest(model_V)$p.value < 0.05){ # < 0.05 means evidence of heteroscedasticity among residuals
+      wt <- 1 / lm(abs(model_V$residuals) ~ model_V$fitted.values)$fitted.values^2
+      model_V = lm(counts ~ ns(time, knots = c(1, 2, 3, 4, 5, 6, 8, 12)), data = dat[dat[,2] == "V",],
+               weights = wt)
+      R2_V = c(R2_V, summary(model_V)$adj.r.squared)}
+  else{R2_V = c(R2_V, summary(model_V)$adj.r.squared)}
+
+  }
+dfSV = cbind(R2_V, R2_S) 
+rownames(dfSV) = all_exons
+colnames(dfSV) = c("R2_V", "R2_S")
+```
+
+# Across all treatments: 
+
+```{r}
+dfSV = dfSV[rownames(dfSV) %in% SV, ]
+dfSC = dfSC[rownames(dfSC) %in% SC, ]
+dfCV = dfCV[rownames(dfCV) %in% CV, ]
+
+keep_SV = rownames(dfSV[dfSV[,1] > 0.6 | dfSV[,2] > 0.6, ]) # 6 exons
+keep_SC = rownames(dfSC[dfSC[,1] > 0.6 | dfSC[,2] > 0.6, ]) # 54 exons
+keep_CV = rownames(dfCV[dfCV[,1] > 0.6 | dfCV[,2] > 0.6, ]) # 41 exons
+
+deu_exons = unique(c(keep_SV, keep_SC, keep_CV)) # 86 exons total
+deu_exons = deu_exons[order(deu_exons)]
+save(deu_exons, file = "out/DEU_exons.RData")
+```
+
