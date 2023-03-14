@@ -55,7 +55,7 @@ timepoints = c("0_5", "1", "2", "3", "4", "5", "6", "8", "12", "24")
 Loop through time points:
 
 ```{r}
-# Note: some genes causes a problem in cwFC evaluation: cw fold changes are all NA. Will remove these gene from DE gene list. 
+# Note: some genes cause a problem in cwFC evaluation: cw fold changes are all NA. Will remove these gene from DE gene list. 
 DEgenes = DEgenes[,1]
 DEgenes = DEgenes[! DEgenes %in% ids[ids[,1] %in% c("CG8929", "Baldspot", "CG32085"), 2]]
 
@@ -174,7 +174,7 @@ for(i in 1:length(all_genes)){
 }
 names(all_genes_res) = all_genes
 
-# Keep for each gene cell type with max specificity (abs value), and set cutoff of 0.5:
+# Keep for each gene the cell type with max specificity (abs value), and set cutoff of 0.5:
 s1 = lapply(all_genes_res, function(x) unlist(x[which.max(abs(as.numeric(x[,2]))),]))
 names(s1) = names(all_genes_res)
 check = lapply(s1, function(x) abs(as.numeric(x[2])) >= 0.5 )
