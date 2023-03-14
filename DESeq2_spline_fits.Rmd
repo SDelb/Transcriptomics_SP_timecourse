@@ -28,7 +28,7 @@ CvsVdat = dat[,c(11:30, 41:60, 71:87)]
 CvsVd = d[c(11:30, 41:60, 71:87),]
 ```
 
-Run DESeq2 with natural cubic spline:
+Run DESeq2 with natural cubic spline, as described in Fischer et al. 2018, NAR:
 
 ```{r}
 # create a natural cubic spline basis with 3 degrees of freedom
